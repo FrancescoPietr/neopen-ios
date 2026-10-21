@@ -1,4 +1,5 @@
-# Su ogni push: prove del nucleo (NeoPenKit) e compilazione dell'app per il simulatore (senza firma).
+# Su ogni push: prove del nucleo (NeoPenKit) e compilazione dell'app (simulatore e iPhone, senza firma).
+# Avvisi ed errori del compilatore diventano annotazioni (leggibili anche dall'API di GitHub).
 name: build
 on:
   push:
@@ -12,18 +13,31 @@ jobs:
       - name: Xcode
         run: sudo xcode-select -s /Applications/Xcode_16.4.app 2>/dev/null || true; xcodebuild -version
       - name: Prove di NeoPenKit
-        run: cd NeoPenKit && swift test
-      - name: Compila l'app (simulatore, senza firma)
         run: |
           set -o pipefail
-          xcodebuild -project NeoPen.xcodeproj -scheme NeoPen \
-            -destination 'generic/platform=iOS Simulator' -configuration Debug \
-            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee build.log | grep -E "error:|warning:|BUILD (SUCCEEDED|FAILED)" || true
-          grep -q "BUILD SUCCEEDED" build.log
-      - name: Registro di compilazione
+          cd NeoPenKit && swift test 2>&1 | tee ../test.log
+          echo "::notice title=Prove::$(grep -E 'Executed [0-9]+ tests' ../test.log | tail -1)"
+      - name: Compila l'app (simulatore)
+        run: |
+          xcodebuild -project NeoPen.xcodeproj -scheme NeoPen -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug CODE_SIGNING_ALLOWED=NO build > sim.log 2>&1 || true
+          grep -E "^/.*: (error|warning): " sim.log | sort -u | head -40 | while IFS= read -r l; do
+            f=$(echo "$l" | cut -d: -f1); n=$(echo "$l" | cut -d: -f2); k=$(echo "$l" | sed -E 's/^.*: (error|warning): .*/\1/'); m=$(echo "$l" | sed -E 's/^.*: (error|warning): //')
+            echo "::$k file=${f#$PWD/},line=$n::$m"
+          done
+          echo "::notice title=Simulatore::$(grep -cE ': warning: ' sim.log) avvisi, $(grep -cE ': error: ' sim.log) errori"
+          grep -q "BUILD SUCCEEDED" sim.log
+      - name: Compila l'app (iPhone, senza firma)
+        run: |
+          xcodebuild -project NeoPen.xcodeproj -scheme NeoPen -destination 'generic/platform=iOS' \
+            -configuration Release CODE_SIGNING_ALLOWED=NO build > device.log 2>&1 || true
+          grep -E "^/.*: error: " device.log | sort -u | head -20 | while IFS= read -r l; do echo "::error::$l"; done
+          echo "::notice title=iPhone::$(grep -E 'BUILD (SUCCEEDED|FAILED)' device.log | tail -1)"
+          grep -q "BUILD SUCCEEDED" device.log
+      - name: Registri
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-log
-          path: build.log
+          name: logs
+          path: "*.log"
           if-no-files-found: ignore
