@@ -43,7 +43,9 @@ jobs:
             k=$(echo "$l" | sed -E 's/^.*: (error|warning): .*/\1/'); echo "::$k::$l"
           done
           grep -iE "error[: ]|fatal|failed" sim.log | grep -vE "^\s*$|warning:|-Werror|errors\.swift|Error\.swift" | sort -u | head -9 | while IFS= read -r l; do echo "::error::$(echo "$l" | cut -c1-900)"; done
-          echo "::notice title=Last lines::$(tail -25 sim.log | cut -c1-300 | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g')"
+          enc() { cut -c1-400 | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}'; }
+          echo "::notice title=Context::$(grep -B2 -A14 -E 'Could not resolve|build commands failed' sim.log | head -60 | enc)"
+          echo "::notice title=Last lines::$(tail -30 sim.log | enc)"
           echo "::notice title=Simulator build::$(grep -E 'BUILD (SUCCEEDED|FAILED)' sim.log | tail -1); module warnings: $(grep -cE 'modules/neopen-ble/.*: warning: ' sim.log)"
           grep -q "BUILD SUCCEEDED" sim.log
       - name: Logs
