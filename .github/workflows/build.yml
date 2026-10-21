@@ -42,7 +42,8 @@ jobs:
           grep -E "^/.*modules/neopen-ble/.*: (error|warning): " sim.log | sort -u | head -40 | while IFS= read -r l; do
             k=$(echo "$l" | sed -E 's/^.*: (error|warning): .*/\1/'); echo "::$k::$l"
           done
-          grep -E "^/.*: error: " sim.log | sort -u | head -20 | while IFS= read -r l; do echo "::error::$l"; done
+          grep -iE "error[: ]|fatal|failed" sim.log | grep -vE "^\s*$|warning:|-Werror|errors\.swift|Error\.swift" | sort -u | head -9 | while IFS= read -r l; do echo "::error::$(echo "$l" | cut -c1-900)"; done
+          echo "::notice title=Last lines::$(tail -25 sim.log | cut -c1-300 | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g')"
           echo "::notice title=Simulator build::$(grep -E 'BUILD (SUCCEEDED|FAILED)' sim.log | tail -1); module warnings: $(grep -cE 'modules/neopen-ble/.*: warning: ' sim.log)"
           grep -q "BUILD SUCCEEDED" sim.log
       - name: Logs

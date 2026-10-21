@@ -10,7 +10,7 @@ An iOS app that connects Francesco's **Neo Smartpen M1+** to his Obsidian vault,
 
 The UI is in Italian (the app is for Francesco); code and comments are in English. The Obsidian plugin lives in a
 separate repository. The project history is in «Neo Pen - chat con Claude.md» (Italian), which Francesco shared.
-A first, native Swift version of this app is kept under the git tag `swift-version`.
+A first, native Swift version of this app is in the git history (commit `de30044`).
 
 ## Stack
 
