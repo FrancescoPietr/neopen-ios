@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -15,7 +15,12 @@ jobs:
           node-version: 22
           cache: npm
       - name: Xcode
-        run: sudo xcode-select -s /Applications/Xcode_16.4.app 2>/dev/null || true; xcodebuild -version
+        # Expo SDK 58 needs Xcode 26 (Swift 6.2): pick the newest Xcode on the runner
+        run: |
+          ls -d /Applications/Xcode*.app
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_2[6-9]*.app 2>/dev/null | sort -V | tail -1 || ls -d /Applications/Xcode.app)"
+          xcodebuild -version
+          echo "::notice title=Xcode::$(xcodebuild -version | head -1), $(swift --version 2>&1 | head -1)"
       - name: Install
         run: npm ci
       - name: Typecheck
