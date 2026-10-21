@@ -1,0 +1,86 @@
+import ExpoModulesCore
+import UIKit
+
+/// JavaScript interface of the pen Bluetooth (see PenBluetooth.swift) plus iOS background tasks.
+/// Bytes travel as base64 strings.
+public class NeoPenBleModule: Module {
+  public func definition() -> ModuleDefinition {
+    Name("NeoPenBle")
+
+    Events("onState", "onReady", "onData", "onClosed", "onLog")
+
+    OnStartObserving {
+      DispatchQueue.main.async { [weak self] in
+        PenBluetooth.shared.start()
+        PenBluetooth.shared.sink = { name, body in self?.sendEvent(name, body) }
+      }
+    }
+
+    OnStopObserving {
+      DispatchQueue.main.async { PenBluetooth.shared.sink = nil }
+    }
+
+    AsyncFunction("getState") { () -> [String: Any] in
+      PenBluetooth.shared.start()
+      return PenBluetooth.shared.snapshot()
+    }.runOnQueue(.main)
+
+    Function("searchPen") {
+      DispatchQueue.main.async { PenBluetooth.shared.searchPen() }
+    }
+
+    Function("stopSearch") {
+      DispatchQueue.main.async { PenBluetooth.shared.stopSearch() }
+    }
+
+    Function("forgetPen") {
+      DispatchQueue.main.async { PenBluetooth.shared.forgetPen() }
+    }
+
+    Function("disconnect") {
+      DispatchQueue.main.async { PenBluetooth.shared.disconnect() }
+    }
+
+    Function("send") { (base64: String) in
+      guard let data = Data(base64Encoded: base64) else { return }
+      DispatchQueue.main.async { PenBluetooth.shared.send(data) }
+    }
+
+    /// A few extra seconds from iOS to finish work with the app in the background. Returns an id for `endBackgroundTask`.
+    Function("beginBackgroundTask") { (name: String) -> Int in
+      BackgroundTasks.begin(name)
+    }
+
+    Function("endBackgroundTask") { (id: Int) in
+      BackgroundTasks.end(id)
+    }
+  }
+}
+
+/// iOS background tasks, by number (JavaScript can't hold a UIBackgroundTaskIdentifier).
+enum BackgroundTasks {
+  private static let lock = NSLock()
+  nonisolated(unsafe) private static var tasks: [Int: UIBackgroundTaskIdentifier] = [:]
+  nonisolated(unsafe) private static var next = 1
+
+  static func begin(_ name: String) -> Int {
+    lock.lock()
+    let id = next
+    next += 1
+    lock.unlock()
+    let task = UIApplication.shared.beginBackgroundTask(withName: name) {
+      end(id) // iOS is about to suspend the app: close it ourselves
+    }
+    lock.lock()
+    tasks[id] = task
+    lock.unlock()
+    return id
+  }
+
+  static func end(_ id: Int) {
+    lock.lock()
+    let task = tasks.removeValue(forKey: id)
+    lock.unlock()
+    if let task, task != .invalid { UIApplication.shared.endBackgroundTask(task) }
+  }
+}

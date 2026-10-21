@@ -1,0 +1,20 @@
+{
+  "expo": {
+    "name": "Neo Pen",
+    "slug": "neopen",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.neopen.app",
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "Neo Pen si collega alla tua Neo Smartpen per scaricare le pagine che scrivi, anche con l'app in background.",
+        "UIBackgroundModes": ["bluetooth-central"],
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "plugins": ["expo-dev-client"]
+  }
+}

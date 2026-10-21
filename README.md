@@ -1,4 +1,4 @@
-# Neo Pen for iPhone
+# Neo Pen for iPhone (Expo / React Native)
 
 An iOS app that connects Francesco's **Neo Smartpen M1+** to his Obsidian vault, **in the background**:
 
@@ -8,108 +8,119 @@ An iOS app that connects Francesco's **Neo Smartpen M1+** to his Obsidian vault,
 4. Pages go to a Google Apps Script.
 5. The **Neo Pen** Obsidian plugin on the PC picks them up (every minute) and transcribes them with Claude.
 
-The app UI is in Italian (it's for Francesco). Code comments are mostly in Italian too; the structure below and the
-tests should make it easy to follow. The Obsidian plugin lives in a separate repository. The project history is in
-the file "Neo Pen - chat con Claude.md" (Italian) that Francesco shared.
+The UI is in Italian (the app is for Francesco); code and comments are in English. The Obsidian plugin lives in a
+separate repository. The project history is in «Neo Pen - chat con Claude.md» (Italian), which Francesco shared.
+A first, native Swift version of this app is kept under the git tag `swift-version`.
 
-## Open, sign, install
+## Stack
 
-1. Open `NeoPen.xcodeproj` in Xcode 16 (iOS 17+).
-2. Target **NeoPen** → *Signing & Capabilities*:
-   - **Team**: your developer account;
-   - **Bundle Identifier**: change it to your own (currently `com.neopen.app`).
-   - The background mode is already in `Info.plist` (`UIBackgroundModes = bluetooth-central`).
-3. Run on Francesco's iPhone (add it to your devices), or *Product → Archive → Distribute → TestFlight*.
+- **Expo SDK 58**, React Native 0.88, TypeScript.
+- **No Expo Go**: the app has native code, a local Expo module for Bluetooth. Use an EAS **development build**
+  to develop, and a **preview** (internal distribution) build for Francesco's phone. No Xcode needed: EAS builds
+  in the cloud.
 
-The project is generated with [XcodeGen](https://github.com/yonaskolb/XcodeGen) from `project.yml`.
-You can edit the project in Xcode directly, or edit `project.yml` and run `xcodegen generate`.
+```
+App.tsx, index.ts          entry; the model starts in index.ts before any screen (background relaunch)
+src/core/                  plain TypeScript, no React Native: testable in Node
+  protocol.ts              Neo pen protocol v2 (framing, escaping, requests, offline + live stroke parsing)
+  session.ts               connection: version → settings → password → clock → live mode → offline memory sync
+  store.ts                 page archive (one JSON per page)
+  relay.ts, uploader.ts    upload to the Google script, one page per request, with retries
+src/app/                   glue: model.ts (native module ↔ session ↔ uploads), files.ts (expo-file-system)
+src/ui/screens.tsx         home, settings, log
+modules/neopen-ble/        local Expo module (Swift)
+  ios/PenBluetooth.swift   CoreBluetooth: state restoration + pending connect to the remembered pen
+  ios/NeoPenAppDelegate.swift  creates the Bluetooth central at launch (AppDelegate subscriber)
+  ios/NeoPenBleModule.swift    JS API: searchPen, forgetPen, send(base64), events, background tasks
+test/                      Node tests (node:test via tsx)
+tools/                     reference packets from NeoLAB's official SDK
+```
+
+The protocol is a port of NeoLAB's official **web** SDK (`web_pen_sdk`, TypeScript). The Obsidian plugin uses that
+SDK with this exact pen. NeoLAB's iOS SDK is Objective-C, last updated in 2020, so it wasn't used. Neither was
+`react-native-ble-plx`: its native module uses the legacy architecture, and we need full control over state
+restoration anyway.
+
+## Develop
+
+```
+npm install
+npm run typecheck
+npm test                                          # 17 tests, ~30 s
+npx eas-cli@latest login
+npx eas-cli@latest device:create                  # register Francesco's iPhone (opens a link to install a profile)
+npx eas-cli@latest build --profile development --platform ios   # dev client; then: npx expo start --dev-client
+npx eas-cli@latest build --profile preview --platform ios       # standalone build for daily use (install via QR/link)
+```
+
+- Change `ios.bundleIdentifier` in `app.json` (currently `com.neopen.app`) to one under your Apple account; EAS
+  handles certificates and profiles.
+- `UIBackgroundModes = bluetooth-central` and the Bluetooth usage text are in `app.json`.
+- JS-only changes reload in the dev client. Changes under `modules/` need a new build.
 
 ## First run on the iPhone
 
 1. **Impostazioni** (Settings) → «Incolla dalla nota "Collegamento iPhone"» (paste from the note).
    - In Obsidian on the PC: Settings → Neo Pen → «Lettura dall'iPhone» → «Crea la nota». This creates a note with
-     the script URL and the secret.
+     the script URL and the secret, synced to the phone by Obsidian Sync.
    - Copy it and tap paste. «Prova lo script» (test) should say everything is fine.
 2. **Collega la penna** (connect the pen): cap off, tap the button. Only needed once.
 3. From then on the app doesn't need to be opened. Leaving it in the background is fine, but it must **not be
    force-quit from the app switcher**: iOS won't relaunch a force-quit app until it is opened again.
 
-## How it works
-
-```
-NeoPenKit/        pure Swift core (no UIKit/CoreBluetooth) — builds and tests on Linux too
-  PenProtocol     Neo pen protocol v2 (framing, escaping, requests, offline + live stroke parsing)
-  Inflate         zlib/DEFLATE decoder (the pen sends offline pages compressed)
-  PenSession      connection: version → settings → password → clock → live mode → offline memory sync
-  PageStore       page archive on the phone (one JSON per page, Application Support/pages)
-  Relay/Uploader  upload to the Google script, one page per request, with retries
-App/
-  BLEManager      CoreBluetooth: state restoration + pending connect to the remembered pen
-  AppModel        glue; log at Documents/registro.txt (shareable from the app)
-  ContentView, SettingsView
-```
-
-The protocol is a port of NeoLAB's official **web** SDK (`web_pen_sdk`, TypeScript). The Obsidian plugin uses that
-SDK with this exact pen. NeoLAB's iOS SDK is Objective-C, last updated in 2020 for Xcode 10, so it wasn't used.
-
-### Background behaviour
+## Background behaviour
 
 - After the first pairing the pen's identifier is saved.
-  - The app calls `connect()` on it; that request **never times out**.
+  - Native code calls `connect()` on it; that request **never times out**.
   - When the pen powers on (cap off), iOS connects it and wakes the app.
-- `CBCentralManagerOptionRestoreIdentifierKey`: if iOS terminated the app for memory, it relaunches it in the
-  background (`willRestoreState`). The central manager must be created in `didFinishLaunching`; `AppDelegate`
-  does that via `AppModel.shared`.
-- On `didDisconnectPeripheral` (pen off) the app immediately calls `connect()` again for next time.
-- Download and upload run inside `beginBackgroundTask`. In live mode every pen notification wakes the app.
+- **State restoration** (`CBCentralManagerOptionRestoreIdentifierKey`): if iOS terminated the app for memory, it
+  relaunches it in the background.
+  - The central manager is created in `didFinishLaunching` by the AppDelegate subscriber, before JavaScript.
+  - Events (data, state, logs) are **queued natively** until JS subscribes, so nothing is lost while the JS bundle
+    loads.
+- `index.ts` starts the model at bundle load, not in a component.
+- On disconnect (pen off), native code calls `connect()` again right away for next time.
+- Download and uploads run inside iOS background tasks (`beginBackgroundTask`, exposed by the module). In live mode
+  every pen notification wakes the app.
 
-### Syncing
+## Sync rules
 
 - **Order:** the app reads the list of notebooks and pages. Pages never seen before go first, then from the last
-  page down, so the page being written arrives first.
+  page down.
 - **Duplicates and resume:** every stroke is identified by its pen-down time (`t`), so duplicates are dropped. If
-  the pen goes off mid-transfer, the next connection simply resumes.
-- **Never abort an offline transfer midway.** With the Bluefy web prototype, after an abort the pen stopped
-  answering later requests. The «Salta le pagine invariate» option (skip unchanged pages) does abort; it is
-  experimental and off by default.
+  the pen goes off mid-transfer, the next connection resumes.
+- **Never abort an offline transfer midway.** With the Bluefy web prototype the pen stopped answering after an
+  abort. «Salta le pagine invariate» (skip unchanged) does abort; it is experimental and off by default.
 - **Empty reads** are retried twice and never uploaded.
-- **Live mode** (on by default): the pen does **not** store strokes it sends live.
-  - The phone becomes the archive: `PageStore` plus the copy on the Google script.
+- **Live mode** (default): the pen does **not** store strokes it sends live.
+  - The phone becomes the archive: the pages in `Documents/pages` plus the copy on the Google script.
   - The PC plugin (v0.13.1+) merges the iPhone copy back when it re-reads a page from the pen.
 - **The pen accepts one connection at a time.** If Obsidian on the PC holds it, the iPhone waits, and vice versa.
 
-### Upload format
-
-POST `text/plain` (no CORS preflight) of `{"secret", "relay": {"action": "put", "pages": [{"id", "count", "strokes"}]}}`:
+Upload: POST `text/plain` of `{"secret", "relay": {"action": "put", "pages": [{"id", "count", "strokes"}]}}`:
 - `id` = `section_owner_note_page`, e.g. `3_27_746_9`;
 - `count` = number of strokes in the page;
 - `strokes` = `[{t, tip, color, pts: [x, y, force, …]}]`, coordinates rounded to 2 decimals.
 
 ## Tests
 
-```
-cd NeoPenKit && swift test
-```
-
-- **ParserParityTests:** the packets in `tools/vectors.json` must parse exactly like NeoLAB's official SDK does
-  (reference output in `tools/expected.json`). The packets cover handshake, lists, offline pages with every
-  compression mode, and live strokes, split randomly like BLE notifications.
-  - Vectors are generated by `tools/make_vectors.py`.
-  - The reference comes from `tools/ts_reference.ts`, which runs the SDK from the plugin repository.
-- **RequestParityTests:** the commands sent to the pen are byte-identical to the official SDK's.
-- **SessionTests:** a simulated pen (`FakePen`) with:
+- **`test/parity.test.ts`:**
+  - the packets in `tools/vectors.json` parse exactly like NeoLAB's official SDK (`tools/expected.json`). They cover
+    handshake, lists, offline pages with every compression mode, and live strokes split like BLE notifications;
+  - requests are byte-identical to the SDK's;
+  - base64 round-trips.
+- **`test/session.test.ts`:** a simulated pen (`test/fakePen.ts`) with:
   - offline memory and per-packet acks;
   - power-off mid-transfer and resume;
   - live strokes, with no duplicates against offline memory;
-  - password, retried empty reads, delete-after-download, a pen that stops answering.
-- **UploaderTests:**
-  - upload once per change;
-  - failures stay pending;
-  - strokes arriving during an upload stay pending;
-  - the exact request body;
-  - script error messages.
+  - password, retried empty reads, delete-after-download, skip-unchanged, a pen that stops answering.
+- **`test/uploader.test.ts`:** upload once per change, failures stay pending, strokes arriving mid-upload stay
+  pending, exact request body, script errors.
 
-GitHub Actions (`.github/workflows/build.yml`) runs the tests and builds the app for the simulator on every push.
+GitHub Actions (`.github/workflows/build.yml`) runs on every push:
+1. typecheck and tests;
+2. `expo prebuild` and `pod install`;
+3. an `xcodebuild` of the whole app for the simulator.
 
 ## To verify on a real phone
 
@@ -120,13 +131,13 @@ GitHub Actions (`.github/workflows/build.yml`) runs the tests and builds the app
 3. **Live:** while writing, «Da inviare al PC» goes up and back to 0. The page shows up in Obsidian on the PC
    within a minute.
 4. **Resume:** cap the pen in the middle of a download. When it comes back on, the download resumes.
-5. **Phone reboot:** unknown whether iOS relaunches the app by itself after a reboot, or whether it must be opened
+5. **Relaunch by iOS:** check that the log shows «App avviata da iOS per la penna» and that pages still arrive.
+6. **Phone reboot:** unknown whether iOS relaunches the app by itself after a reboot, or whether it must be opened
    once.
-6. **Pen held by the PC:** while Obsidian on the PC has the pen, the iPhone should wait without errors piling up.
+7. **Pen held by the PC:** while Obsidian on the PC has the pen, the iPhone should wait without errors piling up.
 
-The log can be shared from the app (Registro → Condividi). It's the most useful thing to send when something goes
-wrong.
+The log can be shared from the app (Registro → Condividi il registro).
 
 ## Later
 
-Customizable actions (Francesco wants to design them later), notifications, notebook selection, widget.
+Customizable actions (Francesco wants to design them later), notifications, notebook selection.

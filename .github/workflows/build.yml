@@ -1,5 +1,5 @@
-# Su ogni push: prove del nucleo (NeoPenKit) e compilazione dell'app (simulatore e iPhone, senza firma).
-# Avvisi ed errori del compilatore diventano annotazioni (leggibili anche dall'API di GitHub).
+# On every push: typecheck + tests of the TypeScript core, then a real iOS build of the Expo app
+# (prebuild → CocoaPods → xcodebuild for the simulator, no signing). Compiler warnings/errors become annotations.
 name: build
 on:
   push:
@@ -7,34 +7,45 @@ on:
 jobs:
   build:
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
       - name: Xcode
         run: sudo xcode-select -s /Applications/Xcode_16.4.app 2>/dev/null || true; xcodebuild -version
-      - name: Prove di NeoPenKit
+      - name: Install
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Tests (TypeScript core)
         run: |
           set -o pipefail
-          cd NeoPenKit && swift test 2>&1 | tee ../test.log
-          echo "::notice title=Prove::$(grep -E 'Executed [0-9]+ tests' ../test.log | tail -1)"
-      - name: Compila l'app (simulatore)
+          npm test 2>&1 | tee test.log
+          echo "::notice title=Tests::$(grep -E '^# (pass|fail)' test.log | tr '\n' ' ')"
+      - name: Expo prebuild (iOS)
+        run: npx expo prebuild --platform ios --no-install
+        env:
+          CI: 1
+          EXPO_NO_TELEMETRY: 1
+      - name: Pods
+        run: cd ios && pod install
+      - name: Build (simulator, no signing)
         run: |
-          xcodebuild -project NeoPen.xcodeproj -scheme NeoPen -destination 'generic/platform=iOS Simulator' \
-            -configuration Debug CODE_SIGNING_ALLOWED=NO build > sim.log 2>&1 || true
-          grep -E "^/.*: (error|warning): " sim.log | sort -u | head -40 | while IFS= read -r l; do
-            f=$(echo "$l" | cut -d: -f1); n=$(echo "$l" | cut -d: -f2); k=$(echo "$l" | sed -E 's/^.*: (error|warning): .*/\1/'); m=$(echo "$l" | sed -E 's/^.*: (error|warning): //')
-            echo "::$k file=${f#$PWD/},line=$n::$m"
+          cd ios
+          xcodebuild -workspace NeoPen.xcworkspace -scheme NeoPen -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build > ../sim.log 2>&1 || true
+          cd ..
+          # warnings and errors from our own code (the native module), then the overall result
+          grep -E "^/.*modules/neopen-ble/.*: (error|warning): " sim.log | sort -u | head -40 | while IFS= read -r l; do
+            k=$(echo "$l" | sed -E 's/^.*: (error|warning): .*/\1/'); echo "::$k::$l"
           done
-          echo "::notice title=Simulatore::$(grep -cE ': warning: ' sim.log) avvisi, $(grep -cE ': error: ' sim.log) errori"
+          grep -E "^/.*: error: " sim.log | sort -u | head -20 | while IFS= read -r l; do echo "::error::$l"; done
+          echo "::notice title=Simulator build::$(grep -E 'BUILD (SUCCEEDED|FAILED)' sim.log | tail -1); module warnings: $(grep -cE 'modules/neopen-ble/.*: warning: ' sim.log)"
           grep -q "BUILD SUCCEEDED" sim.log
-      - name: Compila l'app (iPhone, senza firma)
-        run: |
-          xcodebuild -project NeoPen.xcodeproj -scheme NeoPen -destination 'generic/platform=iOS' \
-            -configuration Release CODE_SIGNING_ALLOWED=NO build > device.log 2>&1 || true
-          grep -E "^/.*: error: " device.log | sort -u | head -20 | while IFS= read -r l; do echo "::error::$l"; done
-          echo "::notice title=iPhone::$(grep -E 'BUILD (SUCCEEDED|FAILED)' device.log | tail -1)"
-          grep -q "BUILD SUCCEEDED" device.log
-      - name: Registri
+      - name: Logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
