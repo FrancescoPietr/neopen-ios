@@ -47,10 +47,10 @@ jobs:
           grep -E "^/.*modules/neopen-ble/.*: (error|warning): " sim.log | sort -u | head -40 | while IFS= read -r l; do
             k=$(echo "$l" | sed -E 's/^.*: (error|warning): .*/\1/'); echo "::$k::$l"
           done
-          grep -iE "error[: ]|fatal|failed" sim.log | grep -vE "^\s*$|warning:|-Werror|errors\.swift|Error\.swift" | sort -u | head -9 | while IFS= read -r l; do echo "::error::$(echo "$l" | cut -c1-900)"; done
+          grep -q "BUILD SUCCEEDED" sim.log || grep -iE "error[: ]|fatal|failed" sim.log | grep -vE "^\s*$|warning:|-Werror|errors\.swift|Error\.swift" | sort -u | head -9 | while IFS= read -r l; do echo "::error::$(echo "$l" | cut -c1-900)"; done
           enc() { cut -c1-400 | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}'; }
-          echo "::notice title=Context::$(grep -B2 -A14 -E 'Could not resolve|build commands failed' sim.log | head -60 | enc)"
-          echo "::notice title=Last lines::$(tail -30 sim.log | enc)"
+          grep -q "BUILD SUCCEEDED" sim.log || echo "::notice title=Context::$(grep -B2 -A14 -E 'Could not resolve|build commands failed' sim.log | head -60 | enc)"
+          grep -q "BUILD SUCCEEDED" sim.log || echo "::notice title=Last lines::$(tail -30 sim.log | enc)"
           echo "::notice title=Simulator build::$(grep -E 'BUILD (SUCCEEDED|FAILED)' sim.log | tail -1); module warnings: $(grep -cE 'modules/neopen-ble/.*: warning: ' sim.log)"
           grep -q "BUILD SUCCEEDED" sim.log
       - name: Logs
