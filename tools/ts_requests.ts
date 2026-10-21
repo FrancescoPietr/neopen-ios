@@ -1,0 +1,22 @@
+// Comandi verso la penna costruiti dal kit ufficiale, per confrontarli byte per byte con NeoPenKit.
+import PenController from "/home/claude/neo-pen-obsidian/vendor/web_pen_sdk/PenCotroller/PenController";
+import { writeFileSync } from "fs";
+const out: Record<string, string> = {};
+let last = "";
+const c = new PenController();
+c.addWrite((u8: Uint8Array) => (last = Buffer.from(u8).toString("hex")));
+const req = (c as any).mClientV2;
+const grab = (name: string, fn: () => void) => { fn(); out[name] = last; };
+grab("version", () => req.ReqVersion());
+grab("penStatus", () => req.ReqPenStatus());
+grab("password", () => req.ReqInputPassword("1234"));
+grab("setTime", () => req.RequestChangeSetting(1, 1792371234567));
+grab("onlineAll", () => req.ReqAddUsingNotes(null, null, null));
+grab("noteList", () => req.ReqOfflineNoteList(0, 0));
+grab("pageList", () => req.ReqOfflinePageList(3, 27, 746));
+grab("pageListEsc", () => req.ReqOfflinePageList(0xc1, 0x7dc0c1, 0xc0));
+grab("offlineData", () => req.ReqOfflineData(3, 27, 746, false, [9]));
+grab("offlineDataDelete", () => req.ReqOfflineData(3, 27, 746, true, [5, 6, 0xc0]));
+grab("ack", () => (c as any).mParserV2.ReqOfflineData2(0xc1, true, false));
+grab("ackEnd", () => (c as any).mParserV2.ReqOfflineData2(3, true, true));
+writeFileSync(process.argv[2], JSON.stringify(out, null, 1));
