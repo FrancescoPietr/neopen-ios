@@ -2,7 +2,7 @@
 // also in the background. Same layout as the Obsidian plugin's renderStrokesPng (render/png.ts): same size, scale and
 // stroke width, so what the model sees is the same. Only the plain black-on-white case: all strokes new (black).
 
-import pako from "pako";
+import { deflate } from "pako";
 import { Stroke } from "./models";
 
 export interface PngResult {
@@ -62,7 +62,7 @@ export function encodeGrayPng(gray: Uint8Array, w: number, h: number): Uint8Arra
   const parts = [
     new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     chunk("IHDR", ihdr),
-    chunk("IDAT", pako.deflate(raw, { level: 6 })),
+    chunk("IDAT", deflate(raw, { level: 6 })),
     chunk("IEND", new Uint8Array(0)),
   ];
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
