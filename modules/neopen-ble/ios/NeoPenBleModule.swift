@@ -57,6 +57,20 @@ public class NeoPenBleModule: Module {
 
     /// POST that iOS keeps running with the app suspended. The body is the file `bodyPath`; the answer lands in
     /// Documents/http/<id>.body and <id>.done.
+    /// The Obsidian vault folder: chosen once from Files, then the app can write files into it.
+    AsyncFunction("pickVaultFolder") { (promise: Promise) in
+      VaultFolder.shared.pick { name in promise.resolve(name) }
+    }
+
+    Function("vaultFolderName") { () -> String? in
+      VaultFolder.shared.name
+    }
+
+    /// Writes a text file inside the vault folder; returns "" or the error message.
+    Function("writeVaultFile") { (path: String, text: String) -> String in
+      VaultFolder.shared.write(path, text)
+    }
+
     Function("startBackgroundPost") { (id: String, url: String, headers: [String: String], bodyPath: String) -> Bool in
       BackgroundHttp.shared.startPost(id: id, url: url, headers: headers, bodyPath: bodyPath)
     }

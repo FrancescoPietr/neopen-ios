@@ -171,6 +171,7 @@ export function SettingsScreen() {
   const st = m.settings;
   const [result, setResult] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
+  const [vaultName, setVaultName] = useState<string | null>(() => model.vaultName());
 
   const paste = async () => {
     const text = await Clipboard.getStringAsync();
@@ -254,6 +255,21 @@ export function SettingsScreen() {
         />
         <Toggle label="Attività con orario subito nel calendario" value={st.phoneEvents} onChange={(v) => model.update({ phoneEvents: v })} />
         <Button label="Prova Claude a telefono bloccato" onPress={model.testClaude} disabled={!st.testKey.trim()} />
+      </Section>
+
+      <Section
+        title="Cartella del vault (prova)"
+        footer="Scegli la cartella del tuo vault in File → Sul mio iPhone → Obsidian. Poi ogni volta che spegni la penna l'app prova a scrivere il file NeoPen/_telefono/prova-scrittura.md e nel Registro dice se ci è riuscita, anche a telefono bloccato."
+      >
+        <Row label="Cartella" value={vaultName ?? "non scelta"} />
+        <Button
+          label="Scegli la cartella del vault"
+          onPress={async () => {
+            const n = await model.pickVault();
+            if (n) setVaultName(n);
+          }}
+        />
+        <Button label="Prova scrittura adesso" onPress={() => model.vaultTest()} disabled={!vaultName} />
       </Section>
 
       <Section>

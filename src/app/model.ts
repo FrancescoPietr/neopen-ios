@@ -1,6 +1,7 @@
 // The app's brain: ties together the native Bluetooth module, the pen session, the archive and uploads to the PC.
 // It starts as soon as JavaScript loads (also when iOS relaunches the app in the background for the pen).
 import NeoPenBle, { BleState } from "../../modules/neopen-ble";
+import { AppState } from "react-native";
 import { fromBase64, toBase64 } from "../core/bytes";
 import { PenSession, SessionError, SessionNote } from "../core/session";
 import { RelayClient } from "../core/relay";
@@ -173,6 +174,8 @@ class AppModel {
     this.emit();
     // what arrived so far leaves for the PC right away
     this.uploader.schedule(1);
+    // test: can the app write into the Obsidian vault right now (often with the phone locked)?
+    this.vaultTest("penna spenta");
     // pen off = you stopped writing: appointments go to the calendar now
     const task = NeoPenBle.beginBackgroundTask("appuntamenti");
     try {
@@ -214,6 +217,34 @@ class AppModel {
   stopSearch = () => NeoPenBle.stopSearch();
   forgetPen = () => NeoPenBle.forgetPen();
   sendNow = () => void this.uploader.flush();
+
+  /** Name of the chosen vault folder (or null). */
+  vaultName(): string | null {
+    try {
+      return NeoPenBle.vaultFolderName();
+    } catch {
+      return null;
+    }
+  }
+
+  pickVault = async (): Promise<string | null> => {
+    const name = await NeoPenBle.pickVaultFolder();
+    if (name) this.write(`Cartella del vault scelta: «${name}».`);
+    this.emit();
+    return name;
+  };
+
+  /** Test: writes NeoPen/_telefono/prova-scrittura.md in the vault and logs whether it worked and the app state. */
+  vaultTest = (why = "a mano") => {
+    if (!this.vaultName()) return;
+    const now = new Date();
+    const state = AppState.currentState;
+    const err = NeoPenBle.writeVaultFile(
+      "NeoPen/_telefono/prova-scrittura.md",
+      `Prova di scrittura dall'app Neo Pen\n\n- quando: ${now.toLocaleString("it-IT")}\n- motivo: ${why}\n- app: ${state}\n`
+    );
+    this.write(err ? `Vault: scrittura NON riuscita (${why}, app ${state}): ${err}` : `Vault: file di prova scritto (${why}, app ${state === "active" ? "aperta" : "in background"}).`);
+  };
 
   /** Test: a Claude call that iOS finishes with the phone locked (see bgtest.ts). */
   private lastTest = 0;
