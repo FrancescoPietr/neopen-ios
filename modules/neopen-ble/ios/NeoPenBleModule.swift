@@ -54,6 +54,12 @@ public class NeoPenBleModule: Module {
     Function("endBackgroundTask") { (id: Int) in
       BackgroundTasks.end(id)
     }
+
+    /// POST that iOS keeps running with the app suspended. The body is the file `bodyPath`; the answer lands in
+    /// Documents/http/<id>.body and <id>.done.
+    Function("startBackgroundPost") { (id: String, url: String, headers: [String: String], bodyPath: String) -> Bool in
+      BackgroundHttp.shared.startPost(id: id, url: url, headers: headers, bodyPath: bodyPath)
+    }
   }
 }
 

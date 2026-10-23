@@ -6,6 +6,7 @@ import { PenSession, SessionError, SessionNote } from "../core/session";
 import { RelayClient } from "../core/relay";
 import { PageStore } from "../core/store";
 import { Uploader } from "../core/uploader";
+import { checkClaudeTests, startClaudeTest } from "./bgtest";
 import { DevicePageFiles, LogFile, readJson, writeJson } from "./files";
 
 export interface Settings {
@@ -15,9 +16,11 @@ export interface Settings {
   deleteAfterDownload: boolean;
   skipUnchanged: boolean;
   penPassword: string;
+  /** Claude key for the background test only. */
+  testKey: string;
 }
 
-const DEFAULT_SETTINGS: Settings = { scriptURL: "", secret: "", live: true, deleteAfterDownload: false, skipUnchanged: false, penPassword: "" };
+const DEFAULT_SETTINGS: Settings = { scriptURL: "", secret: "", live: true, deleteAfterDownload: false, skipUnchanged: false, penPassword: "", testKey: "" };
 
 export type Phase = { kind: "idle" } | { kind: "handshake" } | { kind: "syncing"; done: number; total: number } | { kind: "listening" } | { kind: "needsPassword" };
 
@@ -79,6 +82,9 @@ class AppModel {
     };
     this.configureUploader();
     this.store.subscribe(() => this.emit());
+    // background Claude test: report what finished while the app was asleep
+    setTimeout(() => this.checkTests(), 3000);
+    setInterval(() => this.checkTests(), 5000);
 
     NeoPenBle.addListener("onLog", (e) => this.write(e.message));
     NeoPenBle.addListener("onState", (e) => {
@@ -182,6 +188,15 @@ class AppModel {
   stopSearch = () => NeoPenBle.stopSearch();
   forgetPen = () => NeoPenBle.forgetPen();
   sendNow = () => void this.uploader.flush();
+
+  /** Test: a Claude call that iOS finishes with the phone locked (see bgtest.ts). */
+  testClaude = () => {
+    const key = this.settings.testKey.trim();
+    this.write(key ? startClaudeTest(key) : "Prova Claude: inserisci prima la chiave.");
+  };
+
+  /** Reports finished background tests (also those finished while the app was asleep). */
+  checkTests = () => checkClaudeTests((m) => this.write(m));
 
   resendAll = () => {
     this.store.markAllUnsent();

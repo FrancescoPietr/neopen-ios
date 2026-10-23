@@ -235,6 +235,22 @@ export function SettingsScreen() {
         />
       </Section>
 
+      <Section
+        title="Prova (sviluppo)"
+        footer="Prova se una chiamata a Claude finisce a telefono bloccato. Premi il pulsante, blocca subito il telefono, aspetta 2 minuti e riapri l'app: nel Registro compare com'è andata. La chiave resta solo su questo telefono."
+      >
+        <TextInput
+          style={[s.input, s.mono]}
+          value={st.testKey}
+          onChangeText={(v) => model.update({ testKey: v })}
+          placeholder="Chiave di Claude (sk-ant-…)"
+          autoCapitalize="none"
+          autoCorrect={false}
+          secureTextEntry
+        />
+        <Button label="Prova Claude a telefono bloccato" onPress={model.testClaude} disabled={!st.testKey.trim()} />
+      </Section>
+
       <Section>
         <Button
           label="Rimanda tutte le pagine al PC"

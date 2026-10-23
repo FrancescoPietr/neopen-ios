@@ -8,6 +8,13 @@ public class NeoPenAppDelegate: ExpoAppDelegateSubscriber {
     let restored = (launchOptions?[.bluetoothCentrals] as? [String])?.isEmpty == false
     PenBluetooth.shared.start(launchedForBluetooth: restored)
     if restored { PenBluetooth.shared.log("Rilanciata da iOS per il Bluetooth.") }
+    // background requests (Claude calls): the session must exist at launch to receive its events
+    _ = BackgroundHttp.shared.session
     return true
+  }
+
+  /// iOS relaunches the app (invisibly) when a background request is over.
+  public func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
+    BackgroundHttp.shared.handleEvents(completion: completionHandler)
   }
 }

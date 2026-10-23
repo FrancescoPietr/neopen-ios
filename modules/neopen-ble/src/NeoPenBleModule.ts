@@ -15,6 +15,8 @@ declare class NeoPenBleModule extends NativeModule<NeoPenBleModuleEvents> {
   /** A few extra seconds from iOS to finish work in the background; returns an id for endBackgroundTask. */
   beginBackgroundTask(name: string): number;
   endBackgroundTask(id: number): void;
+  /** POST that iOS finishes by itself with the app suspended. Body from a file path; the answer in Documents/http/<id>.body and <id>.done. */
+  startBackgroundPost(id: string, url: string, headers: Record<string, string>, bodyPath: string): boolean;
 }
 
 export default requireNativeModule<NeoPenBleModule>('NeoPenBle');
