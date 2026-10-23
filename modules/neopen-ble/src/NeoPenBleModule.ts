@@ -20,6 +20,10 @@ declare class NeoPenBleModule extends NativeModule<NeoPenBleModuleEvents> {
   pickVaultFolder(): Promise<string | null>;
   /** Name of the chosen vault folder, or null. */
   vaultFolderName(): string | null;
+  /** Markdown files of the vault (relative paths) with modification time in ms. */
+  listVaultMarkdown(): Promise<{ path: string; mtime: number }[]>;
+  /** Text of a file inside the vault folder, or null. */
+  readVaultFile(path: string): Promise<string | null>;
   /** Writes a text file inside the vault folder (relative path). Returns "" or the error message. */
   writeVaultFile(path: string, text: string): string;
   startBackgroundPost(id: string, url: string, headers: Record<string, string>, bodyPath: string): boolean;

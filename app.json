@@ -11,10 +11,21 @@
       "bundleIdentifier": "com.neopen.app",
       "infoPlist": {
         "NSBluetoothAlwaysUsageDescription": "Neo Pen si collega alla tua Neo Smartpen per scaricare le pagine che scrivi, anche con l'app in background.",
-        "UIBackgroundModes": ["bluetooth-central"],
+        "UIBackgroundModes": [
+          "bluetooth-central"
+        ],
         "ITSAppUsesNonExemptEncryption": false
       }
     },
-    "plugins": ["expo-dev-client"]
+    "plugins": [
+      "expo-dev-client",
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "NeoTransfer mostra e crea gli eventi dei tuoi calendari (Google, iCloud…) insieme alle attività del vault.",
+          "remindersPermission": false
+        }
+      ]
+    ]
   }
 }

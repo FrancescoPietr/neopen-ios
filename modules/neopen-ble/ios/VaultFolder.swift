@@ -72,6 +72,41 @@ final class VaultFolder: NSObject, UIDocumentPickerDelegate {
 
   var name: String? { resolve()?.lastPathComponent }
 
+  /// Markdown files of the vault: [["path": relative path, "mtime": ms]]. Hidden folders (.obsidian, .trash) are skipped.
+  func listMarkdown() -> [[String: Any]] {
+    guard let root = resolve() else { return [] }
+    let accessing = root.startAccessingSecurityScopedResource()
+    defer { if accessing { root.stopAccessingSecurityScopedResource() } }
+    let base = root.standardizedFileURL.path
+    var out: [[String: Any]] = []
+    let keys: [URLResourceKey] = [.contentModificationDateKey, .isRegularFileKey]
+    guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return [] }
+    for case let url as URL in walker {
+      guard url.pathExtension.lowercased() == "md" else { continue }
+      let values = try? url.resourceValues(forKeys: Set(keys))
+      guard values?.isRegularFile == true else { continue }
+      var path = url.standardizedFileURL.path
+      if path.hasPrefix(base) { path = String(path.dropFirst(base.count)) }
+      if path.hasPrefix("/") { path = String(path.dropFirst()) }
+      let mtime = (values?.contentModificationDate?.timeIntervalSince1970 ?? 0) * 1000
+      out.append(["path": path, "mtime": mtime])
+    }
+    return out
+  }
+
+  /// Text of a file inside the folder (relative path), or nil.
+  func read(_ relative: String) -> String? {
+    guard let root = resolve() else { return nil }
+    let accessing = root.startAccessingSecurityScopedResource()
+    defer { if accessing { root.stopAccessingSecurityScopedResource() } }
+    var text: String?
+    var coordinationError: NSError?
+    NSFileCoordinator().coordinate(readingItemAt: root.appendingPathComponent(relative), options: [], error: &coordinationError) { url in
+      text = try? String(contentsOf: url, encoding: .utf8)
+    }
+    return text
+  }
+
   /// Writes a UTF-8 text file at `relative` inside the folder (creating the folders). Returns "" or the error message.
   func write(_ relative: String, _ text: String) -> String {
     guard let root = resolve() else { return "cartella del vault non scelta" }

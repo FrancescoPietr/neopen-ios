@@ -66,6 +66,16 @@ public class NeoPenBleModule: Module {
       VaultFolder.shared.name
     }
 
+    /// Markdown files of the vault with their modification time (ms).
+    AsyncFunction("listVaultMarkdown") { () -> [[String: Any]] in
+      VaultFolder.shared.listMarkdown()
+    }
+
+    /// Text of a file inside the vault folder, or null.
+    AsyncFunction("readVaultFile") { (path: String) -> String? in
+      VaultFolder.shared.read(path)
+    }
+
     /// Writes a text file inside the vault folder; returns "" or the error message.
     Function("writeVaultFile") { (path: String, text: String) -> String in
       VaultFolder.shared.write(path, text)

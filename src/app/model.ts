@@ -175,8 +175,6 @@ class AppModel {
     this.emit();
     // what arrived so far leaves for the PC right away
     this.uploader.schedule(1);
-    // test: can the app write into the Obsidian vault right now (often with the phone locked)?
-    this.vaultTest("penna spenta");
     // pen off = you stopped writing: appointments go to the calendar now
     const task = NeoPenBle.beginBackgroundTask("appuntamenti");
     try {
