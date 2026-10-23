@@ -5,6 +5,7 @@ import { fromBase64, toBase64 } from "../core/bytes";
 import { PenSession, SessionError, SessionNote } from "../core/session";
 import { RelayClient } from "../core/relay";
 import { BackgroundRelayClient } from "./backgroundRelay";
+import { PhoneEvents } from "./phoneEvents";
 import { PageStore } from "../core/store";
 import { Uploader } from "../core/uploader";
 import { checkClaudeTests, startClaudeTest } from "./bgtest";
@@ -17,11 +18,13 @@ export interface Settings {
   deleteAfterDownload: boolean;
   skipUnchanged: boolean;
   penPassword: string;
-  /** Claude key for the background test only. */
+  /** Claude key (on this phone only): appointments to the calendar and the background test. */
   testKey: string;
+  /** Tasks with a time go to the calendar straight from the phone. */
+  phoneEvents: boolean;
 }
 
-const DEFAULT_SETTINGS: Settings = { scriptURL: "", secret: "", live: true, deleteAfterDownload: false, skipUnchanged: false, penPassword: "", testKey: "" };
+const DEFAULT_SETTINGS: Settings = { scriptURL: "", secret: "", live: true, deleteAfterDownload: false, skipUnchanged: false, penPassword: "", testKey: "", phoneEvents: false };
 
 export type Phase = { kind: "idle" } | { kind: "handshake" } | { kind: "syncing"; done: number; total: number } | { kind: "listening" } | { kind: "needsPassword" };
 
@@ -53,6 +56,11 @@ class AppModel {
   readonly store = new PageStore(new DevicePageFiles());
   readonly uploader = new Uploader(this.store);
   private settings: Settings = readJson("impostazioni.json", DEFAULT_SETTINGS);
+  readonly phoneEvents = new PhoneEvents(
+    this.store,
+    () => ({ enabled: this.settings.phoneEvents, apiKey: this.settings.testKey, scriptURL: this.settings.scriptURL.trim(), secret: this.settings.secret.trim() }),
+    (m) => this.write(m)
+  );
   private session: PenSession | null = null;
   private logFile = new LogFile();
   private logLines: LogLine[] = [];
@@ -84,8 +92,15 @@ class AppModel {
     this.configureUploader();
     this.store.subscribe(() => this.emit());
     // background Claude test: report what finished while the app was asleep
-    setTimeout(() => this.checkTests(), 3000);
-    setInterval(() => this.checkTests(), 5000);
+    // and answers for the appointments (calendar from the phone)
+    setTimeout(() => {
+      this.checkTests();
+      this.phoneEvents.poll();
+    }, 3000);
+    setInterval(() => {
+      this.checkTests();
+      this.phoneEvents.poll();
+    }, 4000);
 
     NeoPenBle.addListener("onLog", (e) => this.write(e.message));
     NeoPenBle.addListener("onState", (e) => {
@@ -158,6 +173,15 @@ class AppModel {
     this.emit();
     // what arrived so far leaves for the PC right away
     this.uploader.schedule(1);
+    // pen off = you stopped writing: appointments go to the calendar now
+    const task = NeoPenBle.beginBackgroundTask("appuntamenti");
+    try {
+      this.phoneEvents.kick();
+    } catch (e) {
+      this.write(`Eventi dal telefono: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      NeoPenBle.endBackgroundTask(task);
+    }
   }
 
   private sessionNote(n: SessionNote): void {
@@ -173,6 +197,7 @@ class AppModel {
         break;
       case "pageUpdated":
         this.uploader.schedule(4);
+        this.phoneEvents.strokesArrived();
         break;
       case "syncFinished":
         this.write(n.pages > 0 ? `Memoria della penna letta: ${n.pages} pagine con ${n.newStrokes} tratti nuovi.` : "Memoria della penna letta: niente di nuovo.");
@@ -234,6 +259,8 @@ class AppModel {
     this.settings = { ...this.settings, ...patch };
     writeJson("impostazioni.json", this.settings);
     this.configureUploader();
+    // just turned on: set the starting point (what is already written is not sent)
+    if (patch.phoneEvents) this.phoneEvents.kick();
     this.emit();
   };
 

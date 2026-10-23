@@ -236,8 +236,12 @@ export function SettingsScreen() {
       </Section>
 
       <Section
-        title="Prova (sviluppo)"
-        footer="Prova se una chiamata a Claude finisce a telefono bloccato. Premi il pulsante, blocca subito il telefono, aspetta 2 minuti e riapri l'app: nel Registro compare com'è andata. La chiave resta solo su questo telefono."
+        title="Calendario dal telefono"
+        footer={
+          "Quando smetti di scrivere (penna spenta, o 2 minuti senza tratti) il telefono legge i tratti nuovi con Claude e mette subito nel calendario le attività con un orario, anche a telefono bloccato e PC spento. " +
+          "Il resto (note, attività senza orario, spunte) lo fa Obsidian, che poi sostituisce questi eventi con i suoi. " +
+          "Serve lo script Google aggiornato. La chiave resta solo su questo telefono."
+        }
       >
         <TextInput
           style={[s.input, s.mono]}
@@ -248,6 +252,7 @@ export function SettingsScreen() {
           autoCorrect={false}
           secureTextEntry
         />
+        <Toggle label="Attività con orario subito nel calendario" value={st.phoneEvents} onChange={(v) => model.update({ phoneEvents: v })} />
         <Button label="Prova Claude a telefono bloccato" onPress={model.testClaude} disabled={!st.testKey.trim()} />
       </Section>
 

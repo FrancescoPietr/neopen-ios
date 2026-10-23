@@ -1,0 +1,43 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { eventsRequest, parseEvents, strokesAfter } from "../src/core/events";
+import { newRecord } from "../src/core/models";
+
+const answer = (events: unknown) => JSON.stringify({ content: [{ type: "text", text: JSON.stringify({ events }) }] });
+const at = new Date(2026, 9, 23, 10, 0).getTime(); // venerdì 23/10/2026, 10:00
+
+test("events from the answer: date, range, defaults", () => {
+  const ev = parseEvents(
+    answer([
+      { title: "dentista", start: "15:00", end: "", date: "" },
+      { title: "call Marco", start: "9:30", end: "10:15", date: "2026-10-24" },
+      { title: "", start: "11:00", end: "", date: "" },
+      { title: "senza ora", start: "", end: "", date: "" },
+      { title: "fine prima", start: "18:00", end: "17:00", date: "" },
+    ]),
+    at
+  );
+  assert.equal(ev.length, 3);
+  assert.equal(new Date(ev[0].start).getHours(), 15);
+  assert.equal(new Date(ev[0].start).getDate(), 23);
+  assert.equal(ev[0].end, "");
+  assert.equal(new Date(ev[1].start).getDate(), 24);
+  assert.equal(new Date(ev[1].end).getMinutes(), 15);
+  assert.equal(ev[2].end, ""); // end before start: the script uses the default length
+});
+
+test("request carries today's date and the image", () => {
+  const b = JSON.parse(eventsRequest("AAAA", { width: 10, height: 20 }, at));
+  assert.match(b.messages[0].content[1].text, /venerdì 2026-10-23/);
+  assert.equal(b.messages[0].content[0].source.data, "AAAA");
+});
+
+test("only strokes after the mark, ink only", () => {
+  const r = newRecord({ section: 3, owner: 27, note: 746, page: 1 });
+  r.strokes = [
+    { t: 1, tip: 0, color: 0, pts: [1, 1, 100] },
+    { t: 5, tip: 0, color: 0, pts: [1, 1, 100] },
+    { t: 6, tip: 1, color: 0, pts: [1, 1, 100] },
+  ];
+  assert.deepEqual(strokesAfter(r, 1).map((s) => s.t), [5]);
+});
