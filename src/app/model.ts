@@ -190,7 +190,13 @@ class AppModel {
   sendNow = () => void this.uploader.flush();
 
   /** Test: a Claude call that iOS finishes with the phone locked (see bgtest.ts). */
+  private lastTest = 0;
   testClaude = () => {
+    if (Date.now() - this.lastTest < 60_000) {
+      this.write("Prova Claude: ne è già partita una, aspetta un minuto.");
+      return;
+    }
+    this.lastTest = Date.now();
     const key = this.settings.testKey.trim();
     this.write(key ? startClaudeTest(key) : "Prova Claude: inserisci prima la chiave.");
   };

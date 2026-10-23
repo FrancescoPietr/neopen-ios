@@ -44,7 +44,7 @@ export function checkClaudeTests(log: (m: string) => void): void {
       const id = f.name.replace(/\.done$/, "");
       const seen = new File(d, `${id}.seen`);
       if (seen.exists) continue;
-      const done = JSON.parse(f.textSync()) as { status: number; finished: number; error?: string };
+      const done = JSON.parse(f.textSync()) as { status: number; finished: number; error?: string; appState?: string };
       const start = new File(d, `${id}.start`);
       const began = start.exists ? Number(start.textSync()) : 0;
       const body = new File(d, `${id}.body`);
@@ -63,7 +63,7 @@ export function checkClaudeTests(log: (m: string) => void): void {
       const secs = began ? Math.round((done.finished - began) / 1000) : 0;
       log(
         `Prova Claude: stato ${done.status}${done.error ? ` errore «${done.error}»` : ""}, ${chars} caratteri${detail}. ` +
-          `Partita alle ${began ? clock(began) : "?"}, finita alle ${clock(done.finished)} (${secs} s).`
+          `Partita alle ${began ? clock(began) : "?"}, finita alle ${clock(done.finished)} (${secs} s), app ${done.appState ?? "?"} alla fine.`
       );
       seen.create({ overwrite: true });
       seen.writeSync("1");

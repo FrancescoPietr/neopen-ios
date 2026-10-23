@@ -69,10 +69,22 @@ final class BackgroundHttp: NSObject, URLSessionDataDelegate, URLSessionTaskDele
   func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
     guard let id = task.taskDescription else { return }
     let status = (task.response as? HTTPURLResponse)?.statusCode ?? 0
-    var info: [String: Any] = ["status": status, "finished": Int(Date().timeIntervalSince1970 * 1000)]
-    if let error { info["error"] = error.localizedDescription }
-    if let data = try? JSONSerialization.data(withJSONObject: info) {
-      try? data.write(to: BackgroundHttp.directory.appendingPathComponent("\(id).done"))
+    let finished = Int(Date().timeIntervalSince1970 * 1000)
+    let message = error?.localizedDescription
+    // also records whether the app was in the foreground when the request ended (proof that it finished on its own)
+    DispatchQueue.main.async {
+      let state: String
+      switch UIApplication.shared.applicationState {
+      case .active: state = "attiva"
+      case .inactive: state = "inattiva"
+      case .background: state = "in background"
+      @unknown default: state = "?"
+      }
+      var info: [String: Any] = ["status": status, "finished": finished, "appState": state]
+      if let message { info["error"] = message }
+      if let data = try? JSONSerialization.data(withJSONObject: info) {
+        try? data.write(to: BackgroundHttp.directory.appendingPathComponent("\(id).done"))
+      }
     }
   }
 
