@@ -4,7 +4,7 @@
 // The Obsidian plugin later replaces these events with its own (no duplicates: the script keeps the list per page).
 import { Directory, File, Paths } from "expo-file-system";
 import NeoPenBle from "../../modules/neopen-ble";
-import { eventsRequest, parseTasks, strokesAfter } from "../core/events";
+import { PhoneTodo, eventsRequest, parseTasks, strokesAfter } from "../core/events";
 import { keyLabel, PageKey, pageId } from "../core/models";
 import { renderNewStrokesPng } from "../core/render";
 import { PageStore } from "../core/store";
@@ -17,14 +17,16 @@ interface State {
   /** Per page: pen-down time of the last stroke already handled. */
   upTo: Record<string, number>;
   /** Claude requests in flight: request id → page and strokes it covers. */
-  reading: Record<string, { page: string; upTo: number; writtenAt: number }>;
+  reading: Record<string, { page: string; upTo: number; writtenAt: number; onlyTodos?: boolean }>;
   /** Calendar requests in flight. */
-  saving: Record<string, { page: string; upTo: number; n: number }>;
+  saving: Record<string, { page: string; upTo: number; n: number; todos?: PhoneTodo[] }>;
+  /** Tasks without a time the script could not create (e.g. Todoist not authorized yet): sent again later. */
+  retry: { page: string; upTo: number; todos: PhoneTodo[] }[];
   /** Failed attempts per page (to stop after a few). */
   fails: Record<string, number>;
 }
 
-const EMPTY: State = { base: false, upTo: {}, reading: {}, saving: {}, fails: {} };
+const EMPTY: State = { base: false, upTo: {}, reading: {}, saving: {}, fails: {}, retry: [] };
 const FILE = "telefono-eventi.json";
 const plain = (uri: string) => decodeURIComponent(uri.replace(/^file:\/\//, ""));
 
@@ -76,6 +78,7 @@ export class PhoneEvents {
       this.log("Eventi dal telefono attivi: da ora le attività con orario che scrivi vanno subito nel calendario.");
       return;
     }
+    this.retryTodos();
     const busy = new Set([...Object.values(this.state.reading), ...Object.values(this.state.saving)].map((r) => r.page));
     for (const r of this.store.pages.values()) {
       const id = pageId(r.key);
@@ -88,21 +91,73 @@ export class PhoneEvents {
       if (!png) continue;
       const upTo = Math.max(...fresh.map((s) => s.t));
       const writtenAt = Math.min(...fresh.map((s) => s.t).filter((t) => t > 1_000_000_000_000), Date.now());
-      const req = `ev-${Date.now()}-${++this.counter}`;
-      const f = new File(this.dir(), `${req}.req`);
-      f.create({ overwrite: true });
-      f.writeSync(eventsRequest(toBase64(png.bytes), png, writtenAt));
-      const ok = NeoPenBle.startBackgroundPost(
-        req,
-        "https://api.anthropic.com/v1/messages",
-        { "x-api-key": c.apiKey.trim(), "anthropic-version": "2023-06-01", "content-type": "application/json" },
-        plain(f.uri)
-      );
-      if (!ok) continue;
+      const req = this.askClaude(png, writtenAt, c.apiKey);
+      if (!req) continue;
       this.state.reading[req] = { page: id, upTo, writtenAt };
       this.save();
       this.log(`${keyLabel(r.key)}: cerco attività in ${fresh.length} tratti nuovi…`);
     }
+  }
+
+  /** Sends the tasks without a time that failed before (one request per page). */
+  retryTodos(): void {
+    const c = this.config();
+    if (!c.enabled || !c.scriptURL || !c.secret || !this.state.retry.length) return;
+    const items = this.state.retry;
+    this.state.retry = [];
+    for (const it of items) this.sendToScript(it.page, it.upTo, [], it.todos, true);
+    this.save();
+  }
+
+  /**
+   * Reads again everything written today on every page, but sends only the tasks WITHOUT a time (the ones with a time
+   * are already in the calendar): for tasks that did not reach Todoist.
+   */
+  resendToday(): number {
+    const c = this.config();
+    if (!c.enabled || !c.apiKey.trim() || !c.scriptURL || !c.secret) return 0;
+    const d = new Date();
+    const start = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    let n = 0;
+    for (const r of this.store.pages.values()) {
+      const fresh = r.strokes.filter((st) => st.t >= start && st.tip !== 1 && st.pts.length >= 3);
+      if (!fresh.length) continue;
+      const png = renderNewStrokesPng(r.strokes, (st) => st.t >= start);
+      if (!png) continue;
+      const req = this.askClaude(png, Math.min(...fresh.map((st) => st.t)), c.apiKey);
+      if (!req) continue;
+      this.state.reading[req] = { page: pageId(r.key), upTo: 0, writtenAt: Math.min(...fresh.map((st) => st.t)), onlyTodos: true };
+      n++;
+      this.log(`${keyLabel(r.key)}: rileggo quello che hai scritto oggi (solo le attività senza orario)…`);
+    }
+    this.save();
+    return n;
+  }
+
+  private askClaude(png: { bytes: Uint8Array; width: number; height: number }, writtenAt: number, apiKey: string): string | null {
+    const req = `ev-${Date.now()}-${++this.counter}`;
+    const f = new File(this.dir(), `${req}.req`);
+    f.create({ overwrite: true });
+    f.writeSync(eventsRequest(toBase64(png.bytes), png, writtenAt));
+    const ok = NeoPenBle.startBackgroundPost(
+      req,
+      "https://api.anthropic.com/v1/messages",
+      { "x-api-key": apiKey.trim(), "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      plain(f.uri)
+    );
+    return ok ? req : null;
+  }
+
+  private sendToScript(page: string, upTo: number, events: unknown[], todos: PhoneTodo[], quiet = false): boolean {
+    const c = this.config();
+    const id = `cal-${Date.now()}-${++this.counter}`;
+    const f = new File(this.dir(), `${id}.req`);
+    f.create({ overwrite: true });
+    f.writeSync(JSON.stringify({ secret: c.secret, phone: { action: "add", page, upTo, events, todos } }));
+    if (!NeoPenBle.startBackgroundPost(id, c.scriptURL, { "Content-Type": "text/plain;charset=utf-8" }, plain(f.uri))) return false;
+    this.state.saving[id] = { page, upTo, n: events.length + todos.length, todos };
+    if (quiet) this.log(`${keyLabel(keyOf(page))}: riprovo a creare ${todos.length} ${todos.length === 1 ? "attività" : "attività"}…`);
+    return true;
   }
 
   /** Reads the answers that arrived (also those that arrived while the app was asleep). Call often. */
@@ -135,13 +190,11 @@ export class PhoneEvents {
         delete this.state.fails[info.page];
         this.log(`${label}: nessuna attività nei tratti nuovi.`);
       } else {
-        const { events, todos } = found;
-        const id = `cal-${Date.now()}-${++this.counter}`;
-        const f = new File(dir, `${id}.req`);
-        f.create({ overwrite: true });
-        f.writeSync(JSON.stringify({ secret: c.secret, phone: { action: "add", page: info.page, upTo: info.upTo, events, todos } }));
-        if (NeoPenBle.startBackgroundPost(id, c.scriptURL, { "Content-Type": "text/plain;charset=utf-8" }, plain(f.uri))) {
-          this.state.saving[id] = { page: info.page, upTo: info.upTo, n: events.length + todos.length };
+        const events = info.onlyTodos ? [] : found.events;
+        const todos = found.todos;
+        if (!events.length && !todos.length) {
+          this.log(`${label}: nessuna attività senza orario.`);
+        } else if (this.sendToScript(info.page, info.upTo, events, todos)) {
           const when = (iso: string) => new Date(iso).toLocaleString("it-IT", { weekday: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
           const parts = [
             ...events.map((e) => `«${e.title}» ${when(e.start)} → calendario`),
@@ -172,6 +225,11 @@ export class PhoneEvents {
           answer.todos ? `${answer.todos} ${answer.todos === 1 ? "attività creata" : "attività create"}` : "",
         ].filter(Boolean);
         this.log(`${label}: ${bits.join(", ") || "niente da creare"}.${answer.todoError ? ` Attività: ${answer.todoError}` : ""}`);
+        // nessuna attività creata per un errore (es. Todoist non autorizzato): si riprovano più tardi
+        if (answer.todoError && !answer.todos && info.todos?.length) {
+          this.state.retry.push({ page: info.page, upTo: info.upTo, todos: info.todos });
+          this.log(`${label}: riproverò a creare ${info.todos.length === 1 ? "l'attività" : `le ${info.todos.length} attività`} alla prossima chiusura della penna.`);
+        }
       }
       else if (answer.results !== undefined) this.log(`${label}: lo script Google è una versione vecchia. In Obsidian sul PC: Impostazioni → Neo Pen → copia di nuovo lo script e ripubblicalo.`);
       else this.log(`${label}: calendario non aggiornato (${answer.error ?? result.error ?? "risposta non valida"}). Lo farà il PC.`);

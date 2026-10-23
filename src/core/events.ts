@@ -108,7 +108,8 @@ export function parseTasks(body: string, writtenAt: number): { events: PhoneEven
   const todos: PhoneTodo[] = [];
   for (const e of list) {
     const title = String(e?.title ?? "").trim();
-    if (!title) continue;
+    // un frammento (una lettera letta come attività) non è un'attività
+    if ((title.match(/\p{L}/gu) ?? []).length < 3) continue;
     const dated = /^\d{4}-\d{2}-\d{2}$/.test(String(e?.date ?? "")) ? String(e.date) : "";
     const st = hhmm(e?.start ?? "");
     if (!st) {

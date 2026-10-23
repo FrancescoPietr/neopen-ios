@@ -97,6 +97,7 @@ class AppModel {
     setTimeout(() => {
       this.checkTests();
       this.phoneEvents.poll();
+      this.phoneEvents.retryTodos();
     }, 3000);
     setInterval(() => {
       this.checkTests();
@@ -217,6 +218,12 @@ class AppModel {
   stopSearch = () => NeoPenBle.stopSearch();
   forgetPen = () => NeoPenBle.forgetPen();
   sendNow = () => void this.uploader.flush();
+
+  /** Tasks without a time written today: read again and sent (for those that did not reach Todoist). */
+  resendTodayTodos = () => {
+    const n = this.phoneEvents.resendToday();
+    if (!n) this.write("Niente scritto oggi da rileggere (o mancano chiave e script nelle impostazioni).");
+  };
 
   /** Name of the chosen vault folder (or null). */
   vaultName(): string | null {

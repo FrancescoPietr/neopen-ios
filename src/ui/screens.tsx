@@ -254,6 +254,7 @@ export function SettingsScreen() {
           secureTextEntry
         />
         <Toggle label="Attività con orario subito nel calendario" value={st.phoneEvents} onChange={(v) => model.update({ phoneEvents: v })} />
+        <Button label="Rimanda le attività senza orario scritte oggi" onPress={model.resendTodayTodos} disabled={!st.phoneEvents || !st.testKey.trim()} />
         <Button label="Prova Claude a telefono bloccato" onPress={model.testClaude} disabled={!st.testKey.trim()} />
       </Section>
 
