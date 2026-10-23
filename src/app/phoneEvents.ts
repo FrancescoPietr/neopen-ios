@@ -4,9 +4,9 @@
 // The Obsidian plugin later replaces these events with its own (no duplicates: the script keeps the list per page).
 import { Directory, File, Paths } from "expo-file-system";
 import NeoPenBle from "../../modules/neopen-ble";
-import { eventsRequest, parseEvents, strokesAfter } from "../core/events";
+import { eventsRequest, parseTasks, strokesAfter } from "../core/events";
 import { keyLabel, PageKey, pageId } from "../core/models";
-import { renderPagePng } from "../core/render";
+import { renderNewStrokesPng } from "../core/render";
 import { PageStore } from "../core/store";
 import { toBase64 } from "../core/bytes";
 import { readJson, writeJson } from "./files";
@@ -82,7 +82,9 @@ export class PhoneEvents {
       if (busy.has(id) || (this.state.fails[id] ?? 0) >= 3) continue;
       const fresh = strokesAfter(r, this.state.upTo[id] ?? 0);
       if (!fresh.length) continue;
-      const png = renderPagePng(fresh);
+      const mark = this.state.upTo[id] ?? 0;
+      // the page with the strokes already handled in gray: a time added to an old task is read together with it
+      const png = renderNewStrokesPng(r.strokes, (st) => st.t > mark);
       if (!png) continue;
       const upTo = Math.max(...fresh.map((s) => s.t));
       const writtenAt = Math.min(...fresh.map((s) => s.t).filter((t) => t > 1_000_000_000_000), Date.now());
@@ -99,7 +101,7 @@ export class PhoneEvents {
       if (!ok) continue;
       this.state.reading[req] = { page: id, upTo, writtenAt };
       this.save();
-      this.log(`${keyLabel(r.key)}: cerco attività con orario in ${fresh.length} tratti nuovi…`);
+      this.log(`${keyLabel(r.key)}: cerco attività in ${fresh.length} tratti nuovi…`);
     }
   }
 
@@ -119,27 +121,33 @@ export class PhoneEvents {
         this.save();
         continue;
       }
-      let events;
+      let found: ReturnType<typeof parseTasks> | null;
       try {
-        events = parseEvents(result.body, info.writtenAt);
+        found = parseTasks(result.body, info.writtenAt);
       } catch {
-        events = null;
+        found = null;
       }
-      if (!events) {
+      if (!found) {
         this.state.fails[info.page] = (this.state.fails[info.page] ?? 0) + 1;
         this.log(`${label}: risposta di Claude non leggibile.`);
-      } else if (!events.length) {
+      } else if (!found.events.length && !found.todos.length) {
         this.state.upTo[info.page] = Math.max(this.state.upTo[info.page] ?? 0, info.upTo);
         delete this.state.fails[info.page];
-        this.log(`${label}: nessuna attività con orario nei tratti nuovi.`);
+        this.log(`${label}: nessuna attività nei tratti nuovi.`);
       } else {
+        const { events, todos } = found;
         const id = `cal-${Date.now()}-${++this.counter}`;
         const f = new File(dir, `${id}.req`);
         f.create({ overwrite: true });
-        f.writeSync(JSON.stringify({ secret: c.secret, phone: { action: "add", page: info.page, upTo: info.upTo, events } }));
+        f.writeSync(JSON.stringify({ secret: c.secret, phone: { action: "add", page: info.page, upTo: info.upTo, events, todos } }));
         if (NeoPenBle.startBackgroundPost(id, c.scriptURL, { "Content-Type": "text/plain;charset=utf-8" }, plain(f.uri))) {
-          this.state.saving[id] = { page: info.page, upTo: info.upTo, n: events.length };
-          this.log(`${label}: ${events.map((e) => `«${e.title}» ${new Date(e.start).toLocaleString("it-IT", { weekday: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}`).join(", ")} → calendario…`);
+          this.state.saving[id] = { page: info.page, upTo: info.upTo, n: events.length + todos.length };
+          const when = (iso: string) => new Date(iso).toLocaleString("it-IT", { weekday: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+          const parts = [
+            ...events.map((e) => `«${e.title}» ${when(e.start)} → calendario`),
+            ...todos.map((t) => `«${t.title}»${t.date ? ` (${t.date})` : ""} → attività`),
+          ];
+          this.log(`${label}: ${parts.join(", ")}…`);
         }
       }
       this.save();
@@ -151,14 +159,20 @@ export class PhoneEvents {
       // even on error the strokes count as handled: better a missing event (the PC adds it) than a duplicate
       this.state.upTo[info.page] = Math.max(this.state.upTo[info.page] ?? 0, info.upTo);
       delete this.state.fails[info.page];
-      let answer: { ok?: boolean; created?: number; error?: string; results?: unknown } = {};
+      let answer: { ok?: boolean; created?: number; todos?: number; todoError?: string; error?: string; results?: unknown } = {};
       try {
         answer = JSON.parse(result.body);
       } catch {
         /* checked below */
       }
       const label = keyLabel(keyOf(info.page));
-      if (result.ok && answer.ok && typeof answer.created === "number") this.log(`${label}: ${answer.created} ${answer.created === 1 ? "evento creato" : "eventi creati"} nel calendario.`);
+      if (result.ok && answer.ok && typeof answer.created === "number") {
+        const bits = [
+          answer.created ? `${answer.created} ${answer.created === 1 ? "evento creato" : "eventi creati"} nel calendario` : "",
+          answer.todos ? `${answer.todos} ${answer.todos === 1 ? "attività creata" : "attività create"}` : "",
+        ].filter(Boolean);
+        this.log(`${label}: ${bits.join(", ") || "niente da creare"}.${answer.todoError ? ` Attività: ${answer.todoError}` : ""}`);
+      }
       else if (answer.results !== undefined) this.log(`${label}: lo script Google è una versione vecchia. In Obsidian sul PC: Impostazioni → Neo Pen → copia di nuovo lo script e ripubblicalo.`);
       else this.log(`${label}: calendario non aggiornato (${answer.error ?? result.error ?? "risposta non valida"}). Lo farà il PC.`);
       this.save();

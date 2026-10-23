@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { eventsRequest, parseEvents, strokesAfter } from "../src/core/events";
+import { eventsRequest, parseTasks, strokesAfter } from "../src/core/events";
 import { newRecord } from "../src/core/models";
 
-const answer = (events: unknown) => JSON.stringify({ content: [{ type: "text", text: JSON.stringify({ events }) }] });
+const answer = (tasks: unknown) => JSON.stringify({ content: [{ type: "text", text: JSON.stringify({ tasks }) }] });
 const at = new Date(2026, 9, 23, 10, 0).getTime(); // venerdì 23/10/2026, 10:00
 
 test("events from the answer: date, range, defaults", () => {
-  const ev = parseEvents(
+  const { events: ev, todos } = parseTasks(
     answer([
       { title: "dentista", start: "15:00", end: "", date: "" },
       { title: "call Marco", start: "9:30", end: "10:15", date: "2026-10-24" },
@@ -18,6 +18,7 @@ test("events from the answer: date, range, defaults", () => {
     at
   );
   assert.equal(ev.length, 3);
+  assert.deepEqual(todos, [{ title: "senza ora", date: "" }]);
   assert.equal(new Date(ev[0].start).getHours(), 15);
   assert.equal(new Date(ev[0].start).getDate(), 23);
   assert.equal(ev[0].end, "");

@@ -1,6 +1,6 @@
 // Draws a page into a PNG for the transcription model, with no canvas and no DOM: it runs in the app (JavaScript only),
-// also in the background. Same layout as the Obsidian plugin's renderStrokesPng (render/png.ts): same size, scale and
-// stroke width, so what the model sees is the same. Only the plain black-on-white case: all strokes new (black).
+// also in the background. Same layout as the Obsidian plugin's renderStrokesPng (render/png.ts): same size, scale,
+// stroke width and colours (new strokes black, the ones already handled gray), and the same crop around the new ones.
 
 import { deflate } from "pako";
 import { Stroke } from "./models";
@@ -106,20 +106,73 @@ function flatten(p: number[], X: (v: number) => number, Y: (v: number) => number
  * Draws all the ink strokes in black on white. Returns null if there is nothing to draw.
  * `maxForce` is the pen's maximum pressure (it sets the line width, as in the plugin).
  */
-export function renderPagePng(strokes: Stroke[], maxForce = 1023, targetPixels = TARGET_PIXELS): PngResult | null {
-  const visible = strokes.filter((s) => s.tip !== 1 && s.pts.length >= 3);
-  if (!visible.length) return null;
+interface Bounds {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+}
+
+function boundsOf(strokes: Stroke[]): Bounds | null {
   let minX = Infinity,
     maxX = -Infinity,
     minY = Infinity,
     maxY = -Infinity;
-  for (const s of visible)
+  for (const s of strokes)
     for (let i = 0; i < s.pts.length; i += 3) {
       minX = Math.min(minX, s.pts[i]);
       maxX = Math.max(maxX, s.pts[i]);
       minY = Math.min(minY, s.pts[i + 1]);
       maxY = Math.max(maxY, s.pts[i + 1]);
     }
+  return minX <= maxX ? { minX, maxX, minY, maxY } : null;
+}
+
+function touches(s: Stroke, b: Bounds): boolean {
+  for (let i = 0; i < s.pts.length; i += 3) {
+    const x = s.pts[i],
+      y = s.pts[i + 1];
+    if (x >= b.minX && x <= b.maxX && y >= b.minY && y <= b.maxY) return true;
+  }
+  return false;
+}
+
+const OLD_INK = 168; // #a8a8a8, like the plugin
+
+/**
+ * Old strokes (isNew false) are gray context; the image is cropped around the new strokes plus some context above,
+ * like the plugin does (a few small strokes, e.g. a time added to a task: the whole width of those lines).
+ */
+export function renderNewStrokesPng(strokes: Stroke[], isNew: (s: Stroke) => boolean, maxForce = 1023): PngResult | null {
+  const ink = strokes.filter((s) => s.tip !== 1 && s.pts.length >= 3);
+  const fresh = ink.filter(isNew);
+  const page = boundsOf(ink);
+  const nb = boundsOf(fresh);
+  if (!page || !nb) return null;
+  if (fresh.length === ink.length) return renderPagePng(ink, maxForce);
+  const small = nb.maxX - nb.minX < 8 && nb.maxY - nb.minY < 8;
+  const focus: Bounds = small
+    ? { minX: page.minX, maxX: page.maxX, minY: Math.max(page.minY, nb.minY - 7), maxY: Math.min(page.maxY, nb.maxY + 5) }
+    : {
+        minX: Math.max(page.minX, nb.minX - 14),
+        maxX: Math.min(page.maxX, nb.maxX + 14),
+        minY: Math.max(page.minY, nb.minY - 12),
+        maxY: Math.min(page.maxY, nb.maxY + 4),
+      };
+  return renderPagePng(ink.filter((s) => isNew(s) || touches(s, focus)), maxForce, TARGET_PIXELS, isNew, focus);
+}
+
+export function renderPagePng(
+  strokes: Stroke[],
+  maxForce = 1023,
+  targetPixels = TARGET_PIXELS,
+  isNew: (s: Stroke) => boolean = () => true,
+  area?: Bounds
+): PngResult | null {
+  const visible = strokes.filter((s) => s.tip !== 1 && s.pts.length >= 3);
+  if (!visible.length) return null;
+  const b = area ?? boundsOf(visible)!;
+  const { minX, maxX, minY, maxY } = b;
   const pad = 1.5;
   const wU = maxX - minX + pad * 2;
   const hU = maxY - minY + pad * 2;
@@ -132,7 +185,9 @@ export function renderPagePng(strokes: Stroke[], maxForce = 1023, targetPixels =
   const Y = (v: number) => (v - oy) * scale;
 
   const gray = new Uint8Array(W * H).fill(255);
-  for (const s of visible) {
+  // old ones first, the new ones on top
+  for (const s of [...visible.filter((v) => !isNew(v)), ...visible.filter(isNew)]) {
+    const tone = isNew(s) ? 0 : OLD_INK;
     const p = s.pts;
     const n = p.length / 3;
     let sum = 0;
@@ -189,7 +244,7 @@ export function renderPagePng(strokes: Stroke[], maxForce = 1023, targetPixels =
     for (let y = y0; y <= y1; y++)
       for (let x = x0; x <= x1; x++) {
         const c = cover[(y - y0) * bw + (x - x0)];
-        if (c) gray[y * W + x] = Math.round((gray[y * W + x] * (255 - c)) / 255);
+        if (c) gray[y * W + x] = Math.round((gray[y * W + x] * (255 - c) + tone * c) / 255);
       }
   }
   return { bytes: encodeGrayPng(gray, W, H), width: W, height: H, ox, oy, scale };

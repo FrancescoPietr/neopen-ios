@@ -6,20 +6,25 @@ import { PageRecord, Stroke } from "./models";
 
 export const EVENTS_MODEL = "claude-sonnet-5-5";
 
-const SYSTEM = `You read a handwritten notebook page captured by a smartpen. The writing is mostly Italian, often fast cursive. The image shows ONLY what was written just now.
+const SYSTEM = `You read a handwritten notebook page captured by a smartpen. The writing is mostly Italian, often fast cursive.
+INK: BLACK ink was written just now. GRAY ink was written earlier and is already handled: use it only as context.
 
-Find the TASKS WITH A TIME: a line that starts with a hand-drawn box (a small square, maybe ticked) followed by an action, and that contains a time ("alle 15", "15:30", "ore 9", "h 18") or a time range ("14:00 - 14:30", "dalle 9 alle 11", "alle 9 fino alle 11"). A task can continue on the next line (indented, without a box): join it.
-For each one write {title, start, end, date}:
+Find the TASKS that have something new in BLACK. A task is a line that starts with a hand-drawn box (a small square) followed by an action; it can continue on the next line (indented, without a box): join it.
+Report a task when:
+- it is written in BLACK (a new task), or
+- it is GRAY but a time, a date or words were just added to it in BLACK (then give the whole task, gray and black words together).
+Never report a task that is all gray. A black tick or X in a gray box only checks it: do not report it. Skip tasks whose words are struck through.
+For each task write {title, start, end, date}:
 - title: the task text as written, WITHOUT the box, the time and the day words (read cursive word by word with the sentence context; keep #tags).
-- start: "HH:MM" (24h; "alle 3" in the afternoon context is 15:00 only if clearly meant, otherwise as written).
-- end: "HH:MM" for a range, else "".
+- start: "HH:MM" (24h) if a time is written ("alle 15", "15:30", "ore 9", "h 18", "dalle 9 alle 11"), else "".
+- end: "HH:MM" for a time range, else "".
 - date: "YYYY-MM-DD" if a day is written ("oggi", "domani", "dopodomani", a weekday, "17/10"), computed from TODAY given below (a weekday means the next one, today included); else "".
-Skip a task whose words are struck through. Skip tasks without a time, plain notes, lists and drawings. If there are none, events is [].`;
+Plain notes, lists without boxes and drawings are not tasks. If there are none, tasks is [].`;
 
 const SCHEMA = {
   type: "object",
   properties: {
-    events: {
+    tasks: {
       type: "array",
       items: {
         type: "object",
@@ -29,7 +34,7 @@ const SCHEMA = {
       },
     },
   },
-  required: ["events"],
+  required: ["tasks"],
   additionalProperties: false,
 };
 
@@ -75,6 +80,13 @@ export interface PhoneEvent {
   end: string;
 }
 
+/** A task without a time: it goes to the task app (Todoist or Google Tasks), with a due date if there is one. */
+export interface PhoneTodo {
+  title: string;
+  /** YYYY-MM-DD or "". */
+  date: string;
+}
+
 const hhmm = (s: string): [number, number] | null => {
   const m = /^(\d{1,2})[:.](\d{2})$/.exec(String(s ?? "").trim());
   if (!m) return null;
@@ -83,25 +95,32 @@ const hhmm = (s: string): [number, number] | null => {
   return h < 24 && mi < 60 ? [h, mi] : null;
 };
 
-/** Events from the model's answer (the raw Messages API body). Wrong or incomplete entries are dropped. */
-export function parseEvents(body: string, writtenAt: number): PhoneEvent[] {
+/** Tasks from the model's answer (the raw Messages API body). Wrong or incomplete entries are dropped. */
+export function parseTasks(body: string, writtenAt: number): { events: PhoneEvent[]; todos: PhoneTodo[] } {
   const json = JSON.parse(body);
   const text = (json?.content ?? [])
     .filter((c: { type?: string }) => c?.type === "text")
     .map((c: { text?: string }) => c.text ?? "")
     .join("");
-  const list = (JSON.parse(text)?.events ?? []) as { title?: string; start?: string; end?: string; date?: string }[];
-  const out: PhoneEvent[] = [];
+  const parsed = JSON.parse(text);
+  const list = (parsed?.tasks ?? parsed?.events ?? []) as { title?: string; start?: string; end?: string; date?: string }[];
+  const events: PhoneEvent[] = [];
+  const todos: PhoneTodo[] = [];
   for (const e of list) {
     const title = String(e?.title ?? "").trim();
+    if (!title) continue;
+    const dated = /^\d{4}-\d{2}-\d{2}$/.test(String(e?.date ?? "")) ? String(e.date) : "";
     const st = hhmm(e?.start ?? "");
-    if (!title || !st) continue;
-    const day = /^\d{4}-\d{2}-\d{2}$/.test(String(e?.date ?? "")) ? String(e.date) : localDay(writtenAt);
+    if (!st) {
+      todos.push({ title, date: dated });
+      continue;
+    }
+    const day = dated || localDay(writtenAt);
     const [Y, M, D] = day.split("-").map(Number);
     const start = new Date(Y, M - 1, D, st[0], st[1]);
     const en = hhmm(e?.end ?? "");
     const end = en ? new Date(Y, M - 1, D, en[0], en[1]) : null;
-    out.push({ title, start: start.toISOString(), end: end && end > start ? end.toISOString() : "" });
+    events.push({ title, start: start.toISOString(), end: end && end > start ? end.toISOString() : "" });
   }
-  return out;
+  return { events, todos };
 }
