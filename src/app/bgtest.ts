@@ -40,7 +40,7 @@ export function checkClaudeTests(log: (m: string) => void): void {
     const d = dir();
     if (!d.exists) return;
     for (const f of d.list()) {
-      if (!(f instanceof File) || !f.name.endsWith(".done")) continue;
+      if (!(f instanceof File) || !f.name.startsWith("prova-") || !f.name.endsWith(".done")) continue;
       const id = f.name.replace(/\.done$/, "");
       const seen = new File(d, `${id}.seen`);
       if (seen.exists) continue;

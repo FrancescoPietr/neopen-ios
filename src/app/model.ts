@@ -4,6 +4,7 @@ import NeoPenBle, { BleState } from "../../modules/neopen-ble";
 import { fromBase64, toBase64 } from "../core/bytes";
 import { PenSession, SessionError, SessionNote } from "../core/session";
 import { RelayClient } from "../core/relay";
+import { BackgroundRelayClient } from "./backgroundRelay";
 import { PageStore } from "../core/store";
 import { Uploader } from "../core/uploader";
 import { checkClaudeTests, startClaudeTest } from "./bgtest";
@@ -243,7 +244,7 @@ class AppModel {
   private configureUploader(): void {
     const url = this.settings.scriptURL.trim();
     const secret = this.settings.secret.trim();
-    this.uploader.client = RelayClient.looksValid(url, secret) ? new RelayClient(url, secret) : null;
+    this.uploader.client = RelayClient.looksValid(url, secret) ? new BackgroundRelayClient(url, secret) : null;
   }
 
   // ---------------------------------------------------------------- log and UI state

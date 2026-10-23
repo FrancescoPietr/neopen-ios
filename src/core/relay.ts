@@ -33,7 +33,7 @@ export class RelayClient implements PageSender {
     return this.post(JSON.stringify({ secret: this.secret, relay: { action: "ping" } }));
   }
 
-  private async post(body: string): Promise<void> {
+  protected async post(body: string): Promise<void> {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 60000);
     try {
