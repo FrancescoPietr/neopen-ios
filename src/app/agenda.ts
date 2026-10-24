@@ -128,6 +128,7 @@ class Agenda {
       }
       for (const p of [...this.files.keys()]) if (!seen.has(p)) this.files.delete(p);
       this.rebuild(null);
+      void this.syncDoneEvents();
     } catch (e) {
       this.set({ loading: false, error: e instanceof Error ? e.message : String(e) });
     }
@@ -161,7 +162,16 @@ class Agenda {
     return true;
   }
 
-  toggle = (t: VaultTask) => this.change(t.file, (text) => (text === null ? null : toggleTask(text, t, ymd(new Date()))));
+  /** Ticks or unticks a task; a task with a time also marks its calendar event (✓ in front, like before on Google). */
+  toggle = async (t: VaultTask): Promise<boolean> => {
+    const ok = await this.change(t.file, (text) => (text === null ? null : toggleTask(text, t, ymd(new Date()))));
+    if (ok && t.time && t.date) {
+      const [h, m] = t.time.split(":").map(Number);
+      const [y, mo, d] = t.date.split("-").map(Number);
+      void this.setEventDone(t.title, new Date(y, mo - 1, d, h, m), t.time, !t.done, 0);
+    }
+    return ok;
+  };
   edit = (t: VaultTask, e: TaskEdit) => this.change(t.file, (text) => (text === null ? null : editTask(text, t, e)));
   remove = (t: VaultTask) => this.change(t.file, (text) => (text === null ? null : deleteTask(text, t, this.snap.tasks)));
 
@@ -232,6 +242,76 @@ class Agenda {
       return "created";
     } catch (err) {
       return err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  private doneSynced = new Set<string>();
+
+  /**
+   * Tasks with a time ticked elsewhere (in Obsidian, or by the plugin from the paper): their calendar event gets the ✓
+   * too. Only the last two weeks and the coming month; each task once.
+   */
+  private async syncDoneEvents(): Promise<void> {
+    if (this.snap.calendarAccess !== "granted") return;
+    const from = ymd(new Date(Date.now() - 14 * 86_400_000));
+    const to = ymd(new Date(Date.now() + 31 * 86_400_000));
+    for (const t of this.snap.tasks) {
+      if (!t.done || !t.time || !t.date || t.date < from || t.date > to) continue;
+      const key = `${t.file}|${t.title}|${t.date}|${t.time}`;
+      if (this.doneSynced.has(key)) continue;
+      this.doneSynced.add(key);
+      const [h, m] = t.time.split(":").map(Number);
+      const [y, mo, d] = t.date.split("-").map(Number);
+      await this.setEventDone(t.title, new Date(y, mo - 1, d, h, m), t.time, true, 0);
+    }
+  }
+
+  /**
+   * A task ticked on the paper: the open task with that title (the nearest in time) is ticked in the vault, and the
+   * event with that title gets "✓ " in front of its name. Returns what was marked.
+   */
+  async penTick(title: string, time: string, writtenAt: Date): Promise<{ task: string | null; event: string | null }> {
+    const tasks = await this.freshTasks();
+    const day = writtenAt.getTime();
+    const dist = (t: VaultTask) => (t.date ? Math.abs(new Date(t.date + "T12:00").getTime() - day) : 30 * 86_400_000);
+    const open = tasks
+      // a recurring task: only the copy that was due by then (an old tick never ticks next week's)
+      .filter((t) => !t.done && sameTitle(t.title, title) && (!time || !t.time || t.time === time) && (!t.recurrence || !t.date || t.date <= ymd(writtenAt)))
+      .sort((a, b) => dist(a) - dist(b));
+    let task: string | null = null;
+    if (open.length && (await this.toggle(open[0]))) task = open[0].file;
+    // the event (also when the task is not in the vault yet)
+    const event = open.length && open[0].time ? null : await this.setEventDone(title, writtenAt, time, true, 14);
+    return { task, event: event ?? (open.length && open[0].time ? "con l'attività" : null) };
+  }
+
+  /**
+   * Marks an event done ("✓ title") or not. It looks around `near` (± `days`, the same day if 0) in the writable
+   * calendars for an event with that title (and that time, if given). Returns the event title or null.
+   */
+  async setEventDone(title: string, near: Date, time: string, done: boolean, days: number): Promise<string | null> {
+    try {
+      const p = await Cal.getCalendarPermissions();
+      if (!p.granted) return null;
+      const cals = (await Cal.getCalendars(Cal.EntityTypes.EVENT)).filter((c) => c.allowsModifications);
+      const base = new Date(near.getFullYear(), near.getMonth(), near.getDate());
+      const from = new Date(base.getTime() - days * 86_400_000);
+      const to = new Date(base.getTime() + (days + 1) * 86_400_000);
+      const list = await Cal.listEvents(cals.map((c) => c.id), from, to);
+      const hm = (d: Date) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+      const marked = (x: string) => /^\s*✓/.test(x);
+      const hit = list
+        .filter((e) => !e.recurrenceRule && marked(e.title ?? "") !== done && sameTitle(e.title ?? "", title))
+        .filter((e) => !time || e.allDay || hm(toDate(e.startDate)) === time)
+        .sort((a, b) => Math.abs(toDate(a.startDate).getTime() - near.getTime()) - Math.abs(toDate(b.startDate).getTime() - near.getTime()))[0];
+      if (!hit) return null;
+      const clean = (hit.title ?? "").replace(/^\s*✓\s*/, "");
+      const ev = await Cal.ExpoCalendarEvent.get(hit.id);
+      await ev.update({ title: done ? `✓ ${clean}` : clean });
+      this.dropEvents();
+      return clean;
+    } catch {
+      return null;
     }
   }
 

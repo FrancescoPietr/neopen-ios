@@ -12,14 +12,15 @@ INK: BLACK ink was written just now. GRAY ink was written earlier and is already
 Find the TASKS that have something new in BLACK. A task is a line that starts with a hand-drawn box (a small square) followed by an action; it can continue on the next line (indented, without a box): join it.
 Report a task when:
 - it is written in BLACK (a new task), or
-- it is GRAY but a time, a date or words were just added to it in BLACK (then give the whole task, gray and black words together).
-Never report a task that is all gray. A black tick or X in a gray box only checks it: do not report it. Skip tasks whose words are struck through.
+- it is GRAY but a time, a date or words were just added to it in BLACK (then give the whole task, gray and black words together), or
+- it is GRAY and its box was just ticked or crossed in BLACK (a tick ✓, an X or a filled box, even a quick stroke that goes past the box): it was just done. Give its gray words as title, its gray time as start, and done=true.
+Never report a task that is all gray with nothing black in or on its box. Skip tasks whose words are struck through.
 For each task write {title, start, end, date, done}:
 - title: the task text as written, WITHOUT the box, the time and the day words (read cursive word by word with the sentence context; keep #tags).
 - start: "HH:MM" (24h) if a time is written ("alle 15", "15:30", "ore 9", "h 18", "dalle 9 alle 11"), else "".
 - end: "HH:MM" for a time range, else "".
 - date: "YYYY-MM-DD" if a day is written ("oggi", "domani", "dopodomani", a weekday, "17/10"), computed from TODAY given below (a weekday means the next one, today included); else "".
-- done: true if its box is ticked or crossed, else false.
+- done: true if its box is ticked or crossed (in any ink), else false.
 Plain notes, lists without boxes and drawings are not tasks. If there are none, tasks is [].`;
 
 const SCHEMA = {
@@ -96,8 +97,15 @@ const hhmm = (s: string): [number, number] | null => {
   return h < 24 && mi < 60 ? [h, mi] : null;
 };
 
+/** A task ticked on paper: it is marked done in the vault and in the calendar. */
+export interface PhoneTick {
+  title: string;
+  /** "HH:MM" or "". */
+  time: string;
+}
+
 /** Tasks from the model's answer (the raw Messages API body). Wrong or incomplete entries are dropped. */
-export function parseTasks(body: string, writtenAt: number): { events: PhoneEvent[]; todos: PhoneTodo[] } {
+export function parseTasks(body: string, writtenAt: number): { events: PhoneEvent[]; todos: PhoneTodo[]; ticks: PhoneTick[] } {
   const json = JSON.parse(body);
   const text = (json?.content ?? [])
     .filter((c: { type?: string }) => c?.type === "text")
@@ -107,12 +115,17 @@ export function parseTasks(body: string, writtenAt: number): { events: PhoneEven
   const list = (parsed?.tasks ?? parsed?.events ?? []) as { title?: string; start?: string; end?: string; date?: string; done?: boolean }[];
   const events: PhoneEvent[] = [];
   const todos: PhoneTodo[] = [];
+  const ticks: PhoneTick[] = [];
   for (const e of list) {
     const title = String(e?.title ?? "").trim();
     // un frammento (una lettera letta come attività) non è un'attività
     if ((title.match(/\p{L}/gu) ?? []).length < 3) continue;
-    // written and ticked in one go: nothing left to do
-    if (e?.done === true) continue;
+    // ticked: the task (already in the vault / calendar) is done
+    if (e?.done === true) {
+      const t = hhmm(e?.start ?? "");
+      ticks.push({ title, time: t ? `${String(t[0]).padStart(2, "0")}:${String(t[1]).padStart(2, "0")}` : "" });
+      continue;
+    }
     const dated = /^\d{4}-\d{2}-\d{2}$/.test(String(e?.date ?? "")) ? String(e.date) : "";
     const st = hhmm(e?.start ?? "");
     if (!st) {
@@ -126,5 +139,5 @@ export function parseTasks(body: string, writtenAt: number): { events: PhoneEven
     const end = en ? new Date(Y, M - 1, D, en[0], en[1]) : null;
     events.push({ title, start: start.toISOString(), end: end && end > start ? end.toISOString() : "" });
   }
-  return { events, todos };
+  return { events, todos, ticks };
 }

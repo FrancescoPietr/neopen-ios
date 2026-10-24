@@ -42,3 +42,17 @@ test("only strokes after the mark, ink only", () => {
   ];
   assert.deepEqual(strokesAfter(r, 1).map((s) => s.t), [5]);
 });
+
+test("ticked tasks are reported as done, not created", () => {
+  const r = parseTasks(
+    answer([
+      { title: "andare alla gentita", start: "19:00", end: "", date: "", done: true },
+      { title: "completare App", start: "", end: "", date: "", done: true },
+      { title: "nuova", start: "", end: "", date: "", done: false },
+    ]),
+    at
+  );
+  assert.deepEqual(r.ticks, [{ title: "andare alla gentita", time: "19:00" }, { title: "completare App", time: "" }]);
+  assert.equal(r.events.length, 0);
+  assert.deepEqual(r.todos, [{ title: "nuova", date: "" }]);
+});

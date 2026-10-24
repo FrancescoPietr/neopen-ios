@@ -8,7 +8,7 @@
 // The requests go on with the phone locked (BackgroundHttp.swift); their answers arrive with the onHttpDone event.
 import { Directory, File, Paths } from "expo-file-system";
 import NeoPenBle from "../../modules/neopen-ble";
-import { PhoneEvent, PhoneTodo, eventsRequest, localDay, parseTasks, strokesAfter } from "../core/events";
+import { PhoneEvent, PhoneTick, PhoneTodo, eventsRequest, localDay, parseTasks, strokesAfter } from "../core/events";
 import { keyLabel, PageKey, PageRecord, pageId, Stroke } from "../core/models";
 import { addToDaily, dailyPath } from "../core/penInbox";
 import { renderNewStrokesPng } from "../core/render";
@@ -25,6 +25,8 @@ interface Found {
   writtenAt: number;
   events: PhoneEvent[];
   todos: PhoneTodo[];
+  /** Tasks ticked on the paper. */
+  ticks?: PhoneTick[];
 }
 
 interface State {
@@ -241,11 +243,11 @@ export class PhoneEvents {
         this.state.upTo[info.page] = Math.max(this.state.upTo[info.page] ?? 0, info.upTo);
         delete this.state.fails[info.page];
       }
-      if (!found.events.length && !found.todos.length) {
+      if (!found.events.length && !found.todos.length && !found.ticks.length) {
         if (!info.recover) this.log(`${label}: nessuna attività nei tratti nuovi.`);
         continue;
       }
-      this.state.pending.push({ page: info.page, writtenAt: info.writtenAt, events: found.events, todos: found.todos });
+      this.state.pending.push({ page: info.page, writtenAt: info.writtenAt, events: found.events, todos: found.todos, ticks: found.ticks });
     }
     if (changed) this.save();
     this.pump();
@@ -273,7 +275,7 @@ export class PhoneEvents {
       const todos = items.filter((f) => f.todos.length);
       if (todos.length) {
         if (!agenda.vaultName()) {
-          keep.push(...todos.map((f) => ({ ...f, events: [] })));
+          keep.push(...todos.map((f) => ({ ...f, events: [], ticks: [] })));
           this.tellOnce("vault", "Attività dalla penna in attesa: scegli la cartella del vault (Oggi → Scegli la cartella) e le aggiungo.");
         } else {
           const left = await this.writeTodos(todos, made);
@@ -283,7 +285,16 @@ export class PhoneEvents {
       // 2) tasks with a time → iPhone calendar
       for (const f of items.filter((x) => x.events.length)) {
         const left = await this.writeEvents(f, made);
-        if (left.length) keep.push({ ...f, todos: [], events: left });
+        if (left.length) keep.push({ ...f, todos: [], ticks: [], events: left });
+      }
+      // 3) ticks on the paper → task done in the vault, "✓" on the calendar event (after 1 and 2: a task written and
+      //    ticked in one go is found too)
+      for (const f of items.filter((x) => x.ticks?.length)) {
+        if (!agenda.vaultName()) {
+          keep.push({ ...f, todos: [], events: [] });
+          continue;
+        }
+        await this.writeTicks(f, made);
       }
       this.state.made = [...made].slice(-3000);
       this.state.pending.push(...keep);
@@ -341,6 +352,18 @@ export class PhoneEvents {
     return left;
   }
 
+  private async writeTicks(f: Found, made: Set<string>): Promise<void> {
+    const label = keyLabel(keyOf(f.page));
+    for (const t of f.ticks ?? []) {
+      const key = `x|${looseTitle(t.title)}|${localDay(f.writtenAt)}`;
+      if (made.has(key)) continue;
+      made.add(key);
+      const r = await agenda.penTick(t.title, t.time, new Date(f.writtenAt));
+      const where = [r.task ? "attività" : "", r.event ? "calendario" : ""].filter(Boolean).join(" e ");
+      this.log(where ? `${label}: «${t.title}» spuntata → fatta (${where}).` : `${label}: hai spuntato «${t.title}», ma non la trovo aperta né tra le attività né nel calendario.`);
+    }
+  }
+
   private async writeEvents(f: Found, made: Set<string>): Promise<PhoneEvent[]> {
     const label = keyLabel(keyOf(f.page));
     const left: PhoneEvent[] = [];
@@ -374,7 +397,7 @@ export class PhoneEvents {
 
   /** How many things are waiting (for the settings screen). */
   get waiting(): { reading: number; queue: number; pending: number } {
-    return { reading: Object.keys(this.state.reading).length, queue: this.state.queue.length, pending: this.state.pending.reduce((n, f) => n + f.events.length + f.todos.length, 0) };
+    return { reading: Object.keys(this.state.reading).length, queue: this.state.queue.length, pending: this.state.pending.reduce((n, f) => n + f.events.length + f.todos.length + (f.ticks?.length ?? 0), 0) };
   }
 
   /** Answer of a finished request; its files are removed. */

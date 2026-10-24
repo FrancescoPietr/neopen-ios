@@ -97,7 +97,7 @@ export function EventRow({ ev, onPress }: { ev: CalEvent; onPress: () => void })
         )}
       </View>
       <View style={{ flex: 1 }}>
-        <Text style={s.taskTitle} numberOfLines={2}>
+        <Text style={[s.taskTitle, /^\s*✓/.test(ev.title) ? { color: C.faint, textDecorationLine: "line-through" } : null]} numberOfLines={2}>
           {ev.title}
         </Text>
         {ev.location ? <Text style={s.meta}>{ev.location}</Text> : null}
