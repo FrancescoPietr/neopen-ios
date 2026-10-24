@@ -125,6 +125,7 @@ export function editTask(fileText: string, t: VaultTask, e: TaskEdit): string | 
       priority: e.priority ?? t.priority,
       recurrence: e.recurrence !== undefined ? e.recurrence : t.recurrence,
       doneDate: t.doneDate,
+      blockId: t.blockId,
     },
     indentOf(raw),
     t.dateFromNote && !dateChanged

@@ -7,17 +7,19 @@ public class NeoPenBleModule: Module {
   public func definition() -> ModuleDefinition {
     Name("NeoPenBle")
 
-    Events("onState", "onReady", "onData", "onClosed", "onLog")
+    Events("onState", "onReady", "onData", "onClosed", "onLog", "onHttpDone")
 
     OnStartObserving {
       DispatchQueue.main.async { [weak self] in
         PenBluetooth.shared.start()
         PenBluetooth.shared.sink = { name, body in self?.sendEvent(name, body) }
       }
+      BackgroundHttp.shared.onDone = { [weak self] id in self?.sendEvent("onHttpDone", ["id": id]) }
     }
 
     OnStopObserving {
       DispatchQueue.main.async { PenBluetooth.shared.sink = nil }
+      BackgroundHttp.shared.onDone = nil
     }
 
     AsyncFunction("getState") { () -> [String: Any] in

@@ -15,7 +15,6 @@ declare class NeoPenBleModule extends NativeModule<NeoPenBleModuleEvents> {
   /** A few extra seconds from iOS to finish work in the background; returns an id for endBackgroundTask. */
   beginBackgroundTask(name: string): number;
   endBackgroundTask(id: number): void;
-  /** POST that iOS finishes by itself with the app suspended. Body from a file path; the answer in Documents/http/<id>.body and <id>.done. */
   /** Lets the user choose the Obsidian vault folder (Files). Resolves with its name, or null if cancelled. */
   pickVaultFolder(): Promise<string | null>;
   /** Name of the chosen vault folder, or null. */
@@ -26,6 +25,10 @@ declare class NeoPenBleModule extends NativeModule<NeoPenBleModuleEvents> {
   readVaultFile(path: string): Promise<string | null>;
   /** Writes a text file inside the vault folder (relative path). Returns "" or the error message. */
   writeVaultFile(path: string, text: string): string;
+  /**
+   * POST that goes on with the phone locked: tried at once, then (if iOS takes back the time) finished by iOS by
+   * itself. Body from a file path; the answer in Documents/http/<id>.body and <id>.done, then the onHttpDone event.
+   */
   startBackgroundPost(id: string, url: string, headers: Record<string, string>, bodyPath: string): boolean;
 }
 

@@ -3,6 +3,7 @@ import * as Clipboard from "expo-clipboard";
 import * as Sharing from "expo-sharing";
 import { useState, useSyncExternalStore } from "react";
 import { ActivityIndicator, Alert, FlatList, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
+import { agenda } from "../app/agenda";
 import { model, Snapshot } from "../app/model";
 
 export const useModel = (): Snapshot => useSyncExternalStore(model.subscribe, model.getSnapshot);
@@ -166,6 +167,34 @@ export function HomeScreen({ go }: { go: (screen: "settings" | "log") => void })
 
 // ---------------------------------------------------------------- settings
 
+/** Which iPhone calendar gets the events written with the pen. */
+function PenCalendar({ value }: { value: string }) {
+  const a = useSyncExternalStore(agenda.subscribe, agenda.getSnapshot);
+  const cals = a.calendars.filter((c) => c.writable);
+  if (a.calendarAccess !== "granted") {
+    return (
+      <Section title="Calendario degli eventi dalla penna" footer="Serve l'accesso al calendario dell'iPhone.">
+        <Button label="Consenti l'accesso al calendario" onPress={() => void agenda.initCalendar(true)} />
+      </Section>
+    );
+  }
+  const pick = (id: string) => (
+    <Pressable key={id || "default"} onPress={() => model.update({ penCalendar: id })} style={({ pressed }) => [s.row, pressed && { backgroundColor: C.line }]}>
+      <Text style={[s.rowLabel, { flex: 1 }]}>{id ? cals.find((c) => c.id === id)?.title ?? "?" : "Calendario predefinito dell'iPhone"}</Text>
+      {value === id ? <Text style={[s.button, { color: C.blue }]}>✓</Text> : null}
+    </Pressable>
+  );
+  return (
+    <Section
+      title="Calendario degli eventi dalla penna"
+      footer="Se il tuo calendario Google è aggiunto all'iPhone (Impostazioni → Calendario → Account) sceglilo qui: gli eventi arrivano anche su Google."
+    >
+      {pick("")}
+      {cals.map((c) => pick(c.id))}
+    </Section>
+  );
+}
+
 export function SettingsScreen() {
   const m = useModel();
   const st = m.settings;
@@ -237,11 +266,11 @@ export function SettingsScreen() {
       </Section>
 
       <Section
-        title="Calendario dal telefono"
+        title="Penna → calendario e attività"
         footer={
-          "Quando smetti di scrivere (penna spenta, o 2 minuti senza tratti) il telefono legge i tratti nuovi con Claude e mette subito nel calendario le attività con un orario, anche a telefono bloccato e PC spento. " +
-          "Il resto (note, attività senza orario, spunte) lo fa Obsidian, che poi sostituisce questi eventi con i suoi. " +
-          "Serve lo script Google aggiornato. La chiave resta solo su questo telefono."
+          "Quando smetti di scrivere (penna spenta, o 2 minuti senza tratti) il telefono legge i tratti nuovi con Claude, anche a telefono bloccato e PC spento: " +
+          "le attività con un orario diventano eventi nel calendario dell'iPhone, le altre vanno nella nota del giorno del vault (sezione «Attività»). " +
+          "Quando Obsidian trascrive la pagina prende il posto di queste righe, senza doppioni. La chiave resta solo su questo telefono."
         }
       >
         <TextInput
@@ -253,14 +282,29 @@ export function SettingsScreen() {
           autoCorrect={false}
           secureTextEntry
         />
-        <Toggle label="Attività con orario subito nel calendario" value={st.phoneEvents} onChange={(v) => model.update({ phoneEvents: v })} />
-        <Button label="Rimanda le attività senza orario scritte oggi" onPress={model.resendTodayTodos} disabled={!st.phoneEvents || !st.testKey.trim()} />
+        <Toggle label="Penna → calendario e attività" value={st.phoneEvents} onChange={(v) => model.update({ phoneEvents: v })} />
+        <Button
+          label="Recupera tutto quello che hai già scritto"
+          disabled={!st.phoneEvents || !st.testKey.trim()}
+          onPress={() =>
+            Alert.alert(
+              "Recuperare le cose vecchie?",
+              "Rileggo tutte le pagine sul telefono, giorno per giorno, e aggiungo al calendario e alle attività quello che manca (quello che c'è già non si raddoppia). Ci vuole qualche minuto.",
+              [
+                { text: "Annulla", style: "cancel" },
+                { text: "Recupera", onPress: model.recoverAll },
+              ]
+            )
+          }
+        />
         <Button label="Prova Claude a telefono bloccato" onPress={model.testClaude} disabled={!st.testKey.trim()} />
       </Section>
 
+      <PenCalendar value={st.penCalendar} />
+
       <Section
-        title="Cartella del vault (prova)"
-        footer="Scegli la cartella del tuo vault in File → Sul mio iPhone → Obsidian. Poi ogni volta che spegni la penna l'app prova a scrivere il file NeoPen/_telefono/prova-scrittura.md e nel Registro dice se ci è riuscita, anche a telefono bloccato."
+        title="Cartella del vault"
+        footer="La cartella del tuo vault in File → Sul mio iPhone → Obsidian: lì l'app legge e scrive le attività."
       >
         <Row label="Cartella" value={vaultName ?? "non scelta"} />
         <Button

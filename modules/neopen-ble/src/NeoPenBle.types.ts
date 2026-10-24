@@ -10,6 +10,8 @@ export type NeoPenBleModuleEvents = {
   /** The pen disconnected (powered off or out of range). */
   onClosed: () => void;
   onLog: (e: { message: string }) => void;
+  /** A request started with startBackgroundPost is over: Documents/http/<id>.done is there. */
+  onHttpDone: (e: { id: string }) => void;
 };
 
 export type BleSnapshot = { state: BleState; penName: string; hasPen: boolean; launchedForBluetooth: boolean };

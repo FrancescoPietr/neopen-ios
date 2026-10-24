@@ -4,6 +4,8 @@ import * as Cal from "expo-calendar";
 import { AppState } from "react-native";
 import NeoPenBle from "../../modules/neopen-ble";
 import { QuickAdd } from "../core/quickadd";
+import { DailyNotesConfig } from "../core/penInbox";
+import { sameTitle } from "../core/similar";
 import { DailyConfig, TaskEdit, appendTask, buildIndex, deleteTask, editTask, projectFile, toggleTask } from "../core/taskStore";
 import { VaultTask, ymd } from "../core/tasks";
 
@@ -46,6 +48,7 @@ class Agenda {
   private listeners = new Set<() => void>();
   private files = new Map<string, { mtime: number; text: string }>();
   private daily: DailyConfig = { folder: "Daily", format: "YYYY-MM-DD" };
+  private template = "";
   private loadedRanges: [number, number][] = [];
   private started = false;
 
@@ -109,6 +112,7 @@ class Agenda {
         try {
           const j = JSON.parse(cfg);
           this.daily = { folder: String(j.folder ?? ""), format: String(j.format || "YYYY-MM-DD") };
+          this.template = String(j.template ?? "");
         } catch {
           /* default */
         }
@@ -178,6 +182,59 @@ class Agenda {
     return `obsidian://open?vault=${encodeURIComponent(vault)}&file=${encodeURIComponent(path.replace(/\.md$/, ""))}`;
   }
 
+  // ---------------------------------------------------------------- what the pen writes (see phoneEvents.ts)
+
+  /** The vault read again (only what changed), with its tasks: to check a pen task is not there already. */
+  async freshTasks(): Promise<VaultTask[]> {
+    await this.refresh();
+    return this.snap.tasks;
+  }
+
+  /** Daily notes settings of the vault (from the last read). */
+  dailyNotes(): DailyNotesConfig {
+    return { ...this.daily, template: this.template };
+  }
+
+  /** Text of the daily-note template, or null. */
+  async templateText(): Promise<string | null> {
+    if (!this.template) return null;
+    const p = this.template.replace(/^\/+/, "");
+    return (await NeoPenBle.readVaultFile(p.endsWith(".md") ? p : `${p}.md`)) ?? null;
+  }
+
+  /** Writes a file the phone changed in the vault and updates the lists. Returns "" or the error. */
+  writeFile(path: string, text: string): string {
+    const err = NeoPenBle.writeVaultFile(path, text);
+    if (!err) {
+      this.files.set(path, { mtime: Date.now(), text });
+      this.rebuild(null);
+    }
+    return err;
+  }
+
+  /**
+   * A task with a time written with the pen → event in the iPhone calendar (`calendarId`, or the default one).
+   * Not created if a similar event is already there (any calendar, within an hour and a half).
+   */
+  async penEvent(e: { title: string; start: Date; end: Date | null; note: string }, calendarId: string | null): Promise<"created" | "exists" | "noAccess" | string> {
+    try {
+      const p = await Cal.getCalendarPermissions();
+      if (!p.granted) return "noAccess";
+      const all = await Cal.getCalendars(Cal.EntityTypes.EVENT);
+      const from = new Date(e.start.getFullYear(), e.start.getMonth(), e.start.getDate());
+      const to = new Date(from.getFullYear(), from.getMonth(), from.getDate() + 1);
+      const near = await Cal.listEvents(all.map((c) => c.id), from, to);
+      if (near.some((x) => sameTitle(x.title ?? "", e.title) && Math.abs(toDate(x.startDate).getTime() - e.start.getTime()) <= 90 * 60000)) return "exists";
+      const cal = (calendarId && all.find((c) => c.id === calendarId && c.allowsModifications) ? await Cal.ExpoCalendar.get(calendarId) : null) ?? Cal.getDefaultCalendarSync();
+      const end = e.end && e.end > e.start ? e.end : new Date(e.start.getTime() + 60 * 60000);
+      await cal.createEvent({ title: e.title, startDate: e.start, endDate: end, notes: e.note });
+      this.dropEvents();
+      return "created";
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+  }
+
   // ---------------------------------------------------------------- calendar
 
   async initCalendar(ask: boolean): Promise<void> {
@@ -237,6 +294,13 @@ class Agenda {
     }
   }
 
+  /** The phone changed the vault or the calendar by itself (pen): lists read again if the app is showing them. */
+  changedOutside(): void {
+    if (!this.started) return;
+    void this.refresh();
+    this.dropEvents();
+  }
+
   private dropEvents(): void {
     this.loadedRanges = [];
     this.set({ events: {} });
@@ -285,3 +349,23 @@ class Agenda {
 }
 
 export const agenda = new Agenda();
+
+/**
+ * Events of a day without the doubles of timed tasks: a task with a time written with the pen is both in the vault
+ * (transcribed by Obsidian) and in the calendar (put there by the phone); the app shows it once, as the task.
+ */
+export function visibleEvents(a: AgendaSnapshot, day: string): CalEvent[] {
+  const evs = a.events[day] ?? [];
+  const timed = a.tasks.filter((t) => t.date === day && t.time);
+  if (!timed.length) return evs;
+  return evs.filter((e) => {
+    if (e.allDay) return true;
+    const hm = `${String(e.start.getHours()).padStart(2, "0")}:${String(e.start.getMinutes()).padStart(2, "0")}`;
+    return !timed.some((t) => sameTitle(t.title, e.title) && Math.abs(minutes(t.time!) - minutes(hm)) <= 90);
+  });
+}
+
+const minutes = (hm: string) => {
+  const [h, m] = hm.split(":").map(Number);
+  return h * 60 + m;
+};

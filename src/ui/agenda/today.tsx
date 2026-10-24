@@ -2,7 +2,7 @@
 // (Todoist's Upcoming), events and tasks together.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
-import { agenda, CalEvent } from "../../app/agenda";
+import { agenda, CalEvent, visibleEvents } from "../../app/agenda";
 import { onDay, overdue } from "../../core/taskStore";
 import { VaultTask, addDays, parseYmd } from "../../core/tasks";
 import { C, Empty, EventRow, SectionHeader, Segmented, TaskRow, dayLabel, today, useAgenda, weekdayShort } from "./common";
@@ -33,7 +33,7 @@ export function DayTicker({ selected, onSelect }: { selected: string; onSelect: 
       style={st.ticker}
       renderItem={({ item: d }) => {
         const on = d === selected;
-        const evs = a.events[d] ?? [];
+        const evs = visibleEvents(a, d);
         const tasks = a.tasks.filter((x) => x.date === d && !x.done).length;
         const weekend = [0, 6].includes(parseYmd(d).getDay());
         return (
@@ -58,7 +58,7 @@ export function DayAgenda({ day, onTask, onEvent, header = true }: { day: string
   const a = useAgenda();
   const t = today();
   const late = day === t ? overdue(a.tasks, t) : [];
-  const evs = a.events[day] ?? [];
+  const evs = visibleEvents(a, day);
   const tasks = onDay(a.tasks, day).filter((x) => !x.done || x.doneDate === t || x.date === t);
   return (
     <View>
@@ -127,7 +127,7 @@ export function TodayScreen({ onTask, onEvent, onDayChange }: { onTask: (t: Vaul
               ) : null;
             })()}
             {next.map((d) => {
-              const evs = a.events[d] ?? [];
+              const evs = visibleEvents(a, d);
               const tasks = onDay(a.tasks, d).filter((x) => !x.done);
               return (
                 <View key={d}>

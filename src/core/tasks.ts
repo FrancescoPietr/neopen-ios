@@ -32,6 +32,8 @@ export interface VaultTask {
   project: string;
   /** id of the parent task (sub-task = more indented right below it). */
   parent: string | null;
+  /** Obsidian block id at the end of the line (" ^abc"), e.g. "penna-…" for tasks the phone added from the pen. */
+  blockId: string | null;
 }
 
 export const TASKS_FOLDER = "Attività";
@@ -67,6 +69,12 @@ export function parseTaskLine(raw: string): Omit<VaultTask, "id" | "file" | "lin
   const indent = m[1].replace(/\t/g, "    ").length;
   const done = m[2] !== " ";
   let rest = m[3];
+  let blockId: string | null = null;
+  const b = /\s+\^([A-Za-z0-9-]+)\s*$/.exec(rest);
+  if (b) {
+    blockId = b[1];
+    rest = rest.slice(0, b.index);
+  }
   let doneDate: string | null = null;
   let date: string | null = null;
   let recurrence: string | null = null;
@@ -110,7 +118,7 @@ export function parseTaskLine(raw: string): Omit<VaultTask, "id" | "file" | "lin
   const text = rest.trim();
   const labels = [...text.matchAll(/(?:^|\s)#([\p{L}\p{N}_\-/]+)/gu)].map((l) => l[1].toLowerCase());
   const title = text.replace(/(?:^|\s)#[\p{L}\p{N}_\-/]+/gu, "").replace(/\s{2,}/g, " ").trim() || text;
-  return { indent, done, text, title, labels, date, time, end, priority, recurrence, doneDate };
+  return { indent, done, text, title, labels, date, time, end, priority, recurrence, doneDate, blockId };
 }
 
 /** All tasks of a markdown file. */
@@ -159,6 +167,7 @@ export interface TaskFields {
   priority: Priority;
   recurrence: string | null;
   doneDate: string | null;
+  blockId?: string | null;
 }
 
 /** The markdown line for a task (indentation as a string, e.g. "\t"). */
@@ -170,6 +179,7 @@ export function formatTaskLine(f: TaskFields, indent = "", dateFromNote = false)
   if (f.recurrence) parts.push(`🔁 ${f.recurrence}`);
   if (f.date && !dateFromNote) parts.push(`📅 ${f.date}`);
   if (f.done && f.doneDate) parts.push(`✅ ${f.doneDate}`);
+  if (f.blockId) parts.push(`^${f.blockId}`);
   return `${indent}- [${f.done ? "x" : " "}] ${parts.join(" ")}`;
 }
 
@@ -240,11 +250,11 @@ export function nextOccurrence(recurrence: string, from: string): string | null 
  * next date above the completed one (like the Tasks plugin), so the history stays in the note.
  */
 export function toggleLines(t: VaultTask, today: string, indent = ""): string[] {
-  const base: TaskFields = { done: t.done, text: t.text, date: t.date, time: t.time, end: t.end, priority: t.priority, recurrence: t.recurrence, doneDate: t.doneDate };
+  const base: TaskFields = { done: t.done, text: t.text, date: t.date, time: t.time, end: t.end, priority: t.priority, recurrence: t.recurrence, doneDate: t.doneDate, blockId: t.blockId };
   if (t.done) return [formatTaskLine({ ...base, done: false, doneDate: null }, indent, t.dateFromNote)];
   const doneLine = formatTaskLine({ ...base, done: true, doneDate: today }, indent, t.dateFromNote);
   if (!t.recurrence) return [doneLine];
   const next = nextOccurrence(t.recurrence, t.date ?? today);
   if (!next) return [doneLine];
-  return [formatTaskLine({ ...base, done: false, doneDate: null, date: next }, indent), doneLine];
+  return [formatTaskLine({ ...base, done: false, doneDate: null, date: next, blockId: null }, indent), doneLine];
 }

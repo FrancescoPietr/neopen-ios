@@ -1,6 +1,6 @@
-// Appointments written with the pen go to the calendar straight from the phone (PC off, Obsidian closed).
-// Only the urgent part: tasks with a TIME become calendar events. Everything else (notes, tasks without a time, ticks,
-// deletions) is done by the Obsidian plugin when it transcribes the page; then it replaces these events with its own.
+// Tasks written with the pen, read straight on the phone (PC off, Obsidian closed): those with a TIME become events in
+// the iPhone calendar, the others go into the daily note of the vault. The rest (notes, ticks, deletions) is done by
+// the Obsidian plugin when it transcribes the page.
 
 import { PageRecord, Stroke } from "./models";
 
@@ -14,11 +14,12 @@ Report a task when:
 - it is written in BLACK (a new task), or
 - it is GRAY but a time, a date or words were just added to it in BLACK (then give the whole task, gray and black words together).
 Never report a task that is all gray. A black tick or X in a gray box only checks it: do not report it. Skip tasks whose words are struck through.
-For each task write {title, start, end, date}:
+For each task write {title, start, end, date, done}:
 - title: the task text as written, WITHOUT the box, the time and the day words (read cursive word by word with the sentence context; keep #tags).
 - start: "HH:MM" (24h) if a time is written ("alle 15", "15:30", "ore 9", "h 18", "dalle 9 alle 11"), else "".
 - end: "HH:MM" for a time range, else "".
 - date: "YYYY-MM-DD" if a day is written ("oggi", "domani", "dopodomani", a weekday, "17/10"), computed from TODAY given below (a weekday means the next one, today included); else "".
+- done: true if its box is ticked or crossed, else false.
 Plain notes, lists without boxes and drawings are not tasks. If there are none, tasks is [].`;
 
 const SCHEMA = {
@@ -28,8 +29,8 @@ const SCHEMA = {
       type: "array",
       items: {
         type: "object",
-        properties: { title: { type: "string" }, start: { type: "string" }, end: { type: "string" }, date: { type: "string" } },
-        required: ["title", "start", "end", "date"],
+        properties: { title: { type: "string" }, start: { type: "string" }, end: { type: "string" }, date: { type: "string" }, done: { type: "boolean" } },
+        required: ["title", "start", "end", "date", "done"],
         additionalProperties: false,
       },
     },
@@ -80,7 +81,7 @@ export interface PhoneEvent {
   end: string;
 }
 
-/** A task without a time: it goes to the task app (Todoist or Google Tasks), with a due date if there is one. */
+/** A task without a time: it goes to the daily note in the vault, with a due date if there is one. */
 export interface PhoneTodo {
   title: string;
   /** YYYY-MM-DD or "". */
@@ -103,13 +104,15 @@ export function parseTasks(body: string, writtenAt: number): { events: PhoneEven
     .map((c: { text?: string }) => c.text ?? "")
     .join("");
   const parsed = JSON.parse(text);
-  const list = (parsed?.tasks ?? parsed?.events ?? []) as { title?: string; start?: string; end?: string; date?: string }[];
+  const list = (parsed?.tasks ?? parsed?.events ?? []) as { title?: string; start?: string; end?: string; date?: string; done?: boolean }[];
   const events: PhoneEvent[] = [];
   const todos: PhoneTodo[] = [];
   for (const e of list) {
     const title = String(e?.title ?? "").trim();
     // un frammento (una lettera letta come attività) non è un'attività
     if ((title.match(/\p{L}/gu) ?? []).length < 3) continue;
+    // written and ticked in one go: nothing left to do
+    if (e?.done === true) continue;
     const dated = /^\d{4}-\d{2}-\d{2}$/.test(String(e?.date ?? "")) ? String(e.date) : "";
     const st = hhmm(e?.start ?? "");
     if (!st) {

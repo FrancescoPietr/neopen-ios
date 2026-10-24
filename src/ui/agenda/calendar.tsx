@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import type { ScrollViewInstance } from "react-native";
-import { agenda, CalEvent } from "../../app/agenda";
+import { agenda, CalEvent, visibleEvents } from "../../app/agenda";
 import { onDay } from "../../core/taskStore";
 import { VaultTask, addDays, parseYmd, ymd } from "../../core/tasks";
 import { C, Check, PRIORITY_COLOR, Segmented, hm, monthLong, today, useAgenda } from "./common";
@@ -91,7 +91,7 @@ function HourGrid({ days, onTask, onEvent, compact }: { days: string[]; onTask: 
       {/* all day: events and tasks without a time */}
       <View style={[st.allDay, { paddingLeft: gutter }]}>
         {days.map((d) => {
-          const evs = (a.events[d] ?? []).filter((e) => e.allDay);
+          const evs = visibleEvents(a, d).filter((e) => e.allDay);
           const tasks = onDay(a.tasks, d).filter((x) => !x.time);
           return (
             <View key={d} style={{ width: colW, paddingHorizontal: 1, gap: 2 }}>
@@ -125,7 +125,7 @@ function HourGrid({ days, onTask, onEvent, compact }: { days: string[]; onTask: 
         ))}
         {days.map((d, i) => (
           <View key={d} style={{ position: "absolute", left: gutter + i * colW, width: colW, top: 0, height: HOUR * 24, borderLeftWidth: days.length > 1 ? StyleSheet.hairlineWidth : 0, borderLeftColor: C.line }}>
-            {layout(d, a.events[d] ?? [], onDay(a.tasks, d)).map((b) => (
+            {layout(d, visibleEvents(a, d), onDay(a.tasks, d)).map((b) => (
               <Pressable
                 key={b.key}
                 onPress={() => (b.ev ? onEvent(b.ev) : b.task ? onTask(b.task) : undefined)}
@@ -177,7 +177,7 @@ function MonthGrid({ month, selected, onSelect }: { month: Date; selected: strin
       <View style={st.monthGrid}>
         {days.map((d) => {
           const inMonth = parseYmd(d).getMonth() === month.getMonth();
-          const evs = a.events[d] ?? [];
+          const evs = visibleEvents(a, d);
           const tasks = a.tasks.filter((x) => x.date === d && !x.done).length;
           const on = d === selected;
           return (

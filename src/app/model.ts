@@ -7,6 +7,7 @@ import { PenSession, SessionError, SessionNote } from "../core/session";
 import { RelayClient } from "../core/relay";
 import { BackgroundRelayClient } from "./backgroundRelay";
 import { PhoneEvents } from "./phoneEvents";
+import { agenda } from "./agenda";
 import { PageStore } from "../core/store";
 import { Uploader } from "../core/uploader";
 import { checkClaudeTests, startClaudeTest } from "./bgtest";
@@ -21,11 +22,13 @@ export interface Settings {
   penPassword: string;
   /** Claude key (on this phone only): appointments to the calendar and the background test. */
   testKey: string;
-  /** Tasks with a time go to the calendar straight from the phone. */
+  /** What you write with the pen goes to the calendar (tasks with a time) and the tasks (the others), from the phone. */
   phoneEvents: boolean;
+  /** iPhone calendar for the pen's events ("" = the default calendar). */
+  penCalendar: string;
 }
 
-const DEFAULT_SETTINGS: Settings = { scriptURL: "", secret: "", live: true, deleteAfterDownload: false, skipUnchanged: false, penPassword: "", testKey: "", phoneEvents: false };
+const DEFAULT_SETTINGS: Settings = { scriptURL: "", secret: "", live: true, deleteAfterDownload: false, skipUnchanged: false, penPassword: "", testKey: "", phoneEvents: false, penCalendar: "" };
 
 export type Phase = { kind: "idle" } | { kind: "handshake" } | { kind: "syncing"; done: number; total: number } | { kind: "listening" } | { kind: "needsPassword" };
 
@@ -56,10 +59,10 @@ export interface Snapshot {
 class AppModel {
   readonly store = new PageStore(new DevicePageFiles());
   readonly uploader = new Uploader(this.store);
-  private settings: Settings = readJson("impostazioni.json", DEFAULT_SETTINGS);
+  private settings: Settings = { ...DEFAULT_SETTINGS, ...readJson<Settings>("impostazioni.json", DEFAULT_SETTINGS) };
   readonly phoneEvents = new PhoneEvents(
     this.store,
-    () => ({ enabled: this.settings.phoneEvents, apiKey: this.settings.testKey, scriptURL: this.settings.scriptURL.trim(), secret: this.settings.secret.trim() }),
+    () => ({ enabled: this.settings.phoneEvents, apiKey: this.settings.testKey, calendarId: this.settings.penCalendar }),
     (m) => this.write(m)
   );
   private session: PenSession | null = null;
@@ -94,11 +97,23 @@ class AppModel {
     this.store.subscribe(() => this.emit());
     // background Claude test: report what finished while the app was asleep
     // and answers for the appointments (calendar from the phone)
+    setTimeout(() => this.phoneEvents.poll(), 300);
     setTimeout(() => {
       this.checkTests();
       this.phoneEvents.poll();
-      this.phoneEvents.retryTodos();
     }, 3000);
+    // a request is over (also with the phone locked: iOS wakes the app): its answer is used right away
+    NeoPenBle.addListener("onHttpDone", () => {
+      this.checkTests();
+      this.phoneEvents.poll();
+    });
+    // back in the app: what was waiting for the calendar access or the vault folder is written now
+    AppState.addEventListener("change", (st) => {
+      if (st === "active") {
+        this.phoneEvents.poll();
+        this.phoneEvents.flush(true);
+      }
+    });
     setInterval(() => {
       this.checkTests();
       this.phoneEvents.poll();
@@ -217,10 +232,10 @@ class AppModel {
   forgetPen = () => NeoPenBle.forgetPen();
   sendNow = () => void this.uploader.flush();
 
-  /** Tasks without a time written today: read again and sent (for those that did not reach Todoist). */
-  resendTodayTodos = () => {
-    const n = this.phoneEvents.resendToday();
-    if (!n) this.write("Niente scritto oggi da rileggere (o mancano chiave e script nelle impostazioni).");
+  /** Reads again everything written so far and adds what is missing from the calendar and the tasks. */
+  recoverAll = () => {
+    const n = this.phoneEvents.recoverAll();
+    if (!n) this.write(this.settings.phoneEvents && this.settings.testKey.trim() ? "Recupero: nessuna pagina scritta da rileggere." : "Recupero: attiva prima «Penna → calendario e attività» e inserisci la chiave di Claude.");
   };
 
   /** Name of the chosen vault folder (or null). */
@@ -234,7 +249,11 @@ class AppModel {
 
   pickVault = async (): Promise<string | null> => {
     const name = await NeoPenBle.pickVaultFolder();
-    if (name) this.write(`Cartella del vault scelta: «${name}».`);
+    if (name) {
+      this.write(`Cartella del vault scelta: «${name}».`);
+      void agenda.refresh();
+      this.phoneEvents.flush(true);
+    }
     this.emit();
     return name;
   };

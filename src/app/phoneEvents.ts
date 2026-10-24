@@ -1,52 +1,83 @@
-// Appointments straight from the phone: when you stop writing (pen off, or a couple of minutes without strokes) the
-// new strokes of each page are drawn, sent to Claude (tasks with a time only) and the events go to the calendar
-// through the Google script. Every request is a native background request, so it all works with the phone locked.
-// The Obsidian plugin later replaces these events with its own (no duplicates: the script keeps the list per page).
+// The pen → calendar and tasks, all on the phone (PC off, Obsidian closed, phone locked in a pocket).
+// When you stop writing (pen off, or two minutes without strokes) the new strokes of each page are drawn and read by
+// Claude; what it finds goes straight where the app shows it:
+//   - tasks with a time → an event in the iPhone calendar (EventKit);
+//   - tasks without a time → the daily note of the vault, under "### Attività" (see core/penInbox.ts).
+// Nothing is created twice: similar tasks already in the vault and similar events already in the calendar are skipped,
+// and what was created once is remembered (if you delete it, it does not come back).
+// The requests go on with the phone locked (BackgroundHttp.swift); their answers arrive with the onHttpDone event.
 import { Directory, File, Paths } from "expo-file-system";
 import NeoPenBle from "../../modules/neopen-ble";
-import { PhoneTodo, eventsRequest, parseTasks, strokesAfter } from "../core/events";
-import { keyLabel, PageKey, pageId } from "../core/models";
+import { PhoneEvent, PhoneTodo, eventsRequest, localDay, parseTasks, strokesAfter } from "../core/events";
+import { keyLabel, PageKey, PageRecord, pageId, Stroke } from "../core/models";
+import { addToDaily, dailyPath } from "../core/penInbox";
 import { renderNewStrokesPng } from "../core/render";
+import { looseTitle, sameTitle } from "../core/similar";
 import { PageStore } from "../core/store";
 import { toBase64 } from "../core/bytes";
+import { parseYmd } from "../core/tasks";
+import { agenda } from "./agenda";
 import { readJson, writeJson } from "./files";
 
+interface Found {
+  page: string;
+  /** When the strokes were written (for the daily note and "oggi"/"domani"). */
+  writtenAt: number;
+  events: PhoneEvent[];
+  todos: PhoneTodo[];
+}
+
 interface State {
-  /** The starting point is set (strokes written before the feature was turned on are never sent). */
+  /** The starting point is set (strokes written before the feature was turned on are read only by «Recupera»). */
   base: boolean;
-  /** Per page: pen-down time of the last stroke already handled. */
+  /** Per page: pen-down time of the last stroke already read. */
   upTo: Record<string, number>;
   /** Claude requests in flight: request id → page and strokes it covers. */
-  reading: Record<string, { page: string; upTo: number; writtenAt: number; onlyTodos?: boolean }>;
-  /** Calendar requests in flight. */
-  saving: Record<string, { page: string; upTo: number; n: number; todos?: PhoneTodo[] }>;
-  /** Tasks without a time the script could not create (e.g. Todoist not authorized yet): sent again later. */
-  retry: { page: string; upTo: number; todos: PhoneTodo[] }[];
-  /** Failed attempts per page (to stop after a few). */
+  reading: Record<string, { page: string; upTo: number; writtenAt: number; recover?: boolean }>;
+  /** Found, not yet written (no vault folder or no calendar access yet): written as soon as possible. */
+  pending: Found[];
+  /** «Recupera»: pages and days still to read (two at a time). */
+  queue: { page: string; day: string }[];
+  /** What was already created ("e|title|start" or "t|title|day"): never twice. */
+  made: string[];
+  /** Failed attempts per page (to stop after a few, until you write again). */
   fails: Record<string, number>;
 }
 
-const EMPTY: State = { base: false, upTo: {}, reading: {}, saving: {}, fails: {}, retry: [] };
+const EMPTY: State = { base: false, upTo: {}, reading: {}, pending: [], queue: [], made: [], fails: {} };
 const FILE = "telefono-eventi.json";
 const plain = (uri: string) => decodeURIComponent(uri.replace(/^file:\/\//, ""));
+const isInk = (s: Stroke) => s.tip !== 1 && s.pts.length >= 3;
+const realTime = (t: number) => t > 1_000_000_000_000;
 
 export interface PhoneEventsConfig {
   enabled: boolean;
   apiKey: string;
-  scriptURL: string;
-  secret: string;
+  /** iPhone calendar for the events ("" = the default one). */
+  calendarId: string;
 }
 
 export class PhoneEvents {
   private state: State = { ...EMPTY, ...readJson<State>(FILE, EMPTY) };
   private idle: ReturnType<typeof setTimeout> | null = null;
   private counter = 0;
+  private work: Promise<void> = Promise.resolve();
+  private told = new Set<string>();
+  private lastFlush = 0;
 
   constructor(
     private store: PageStore,
     private config: () => PhoneEventsConfig,
     private log: (m: string) => void
-  ) {}
+  ) {
+    // from the versions that sent to Google/Todoist
+    const st = this.state as State & { saving?: unknown; retry?: unknown };
+    delete st.saving;
+    delete st.retry;
+    this.state.pending ??= [];
+    this.state.queue ??= [];
+    this.state.made ??= [];
+  }
 
   private save(): void {
     writeJson(FILE, this.state);
@@ -58,8 +89,14 @@ export class PhoneEvents {
     return d;
   }
 
+  private ready(): boolean {
+    const c = this.config();
+    return c.enabled && !!c.apiKey.trim();
+  }
+
   /** New strokes arrived: if you stop writing for 2 minutes, the page is read. */
   strokesArrived(): void {
+    this.state.fails = {};
     if (this.idle) clearTimeout(this.idle);
     this.idle = setTimeout(() => this.kick(), 120_000);
   }
@@ -68,73 +105,94 @@ export class PhoneEvents {
   kick(): void {
     if (this.idle) clearTimeout(this.idle);
     this.idle = null;
-    const c = this.config();
-    if (!c.enabled || !c.apiKey.trim() || !c.scriptURL || !c.secret) return;
+    if (!this.ready()) return;
     if (!this.state.base) {
-      // first time: what is already on the pages is not news
+      // first time: what is already on the pages is read only if you ask («Recupera»)
       for (const r of this.store.pages.values()) this.state.upTo[pageId(r.key)] = Math.max(0, ...r.strokes.map((s) => s.t));
       this.state.base = true;
       this.save();
-      this.log("Eventi dal telefono attivi: da ora le attività con orario che scrivi vanno subito nel calendario.");
+      this.log("Penna → calendario e attività attivo: da ora quello che scrivi va subito nel calendario e nelle attività.");
       return;
     }
-    this.retryTodos();
-    const busy = new Set([...Object.values(this.state.reading), ...Object.values(this.state.saving)].map((r) => r.page));
+    const busy = new Set(Object.values(this.state.reading).filter((r) => !r.recover).map((r) => r.page));
     for (const r of this.store.pages.values()) {
       const id = pageId(r.key);
       if (busy.has(id) || (this.state.fails[id] ?? 0) >= 3) continue;
-      const fresh = strokesAfter(r, this.state.upTo[id] ?? 0);
-      if (!fresh.length) continue;
       const mark = this.state.upTo[id] ?? 0;
-      // the page with the strokes already handled in gray: a time added to an old task is read together with it
+      const fresh = strokesAfter(r, mark);
+      if (!fresh.length) continue;
+      // the page with the strokes already read in gray: a time added to an old task is read together with it
       const png = renderNewStrokesPng(r.strokes, (st) => st.t > mark);
       if (!png) continue;
       const upTo = Math.max(...fresh.map((s) => s.t));
-      const writtenAt = Math.min(...fresh.map((s) => s.t).filter((t) => t > 1_000_000_000_000), Date.now());
-      const req = this.askClaude(png, writtenAt, c.apiKey);
+      const writtenAt = Math.min(...fresh.map((s) => s.t).filter(realTime), Date.now());
+      const req = this.askClaude(png, writtenAt);
       if (!req) continue;
       this.state.reading[req] = { page: id, upTo, writtenAt };
       this.save();
-      this.log(`${keyLabel(r.key)}: cerco attività in ${fresh.length} tratti nuovi…`);
+      this.log(`${keyLabel(r.key)}: leggo ${fresh.length} tratti nuovi…`);
     }
-  }
-
-  /** Sends the tasks without a time that failed before (one request per page). */
-  retryTodos(): void {
-    const c = this.config();
-    if (!c.enabled || !c.scriptURL || !c.secret || !this.state.retry.length) return;
-    const items = this.state.retry;
-    this.state.retry = [];
-    for (const it of items) this.sendToScript(it.page, it.upTo, [], it.todos, true);
-    this.save();
+    this.flush(true);
   }
 
   /**
-   * Reads again everything written today on every page, but sends only the tasks WITHOUT a time (the ones with a time
-   * are already in the calendar): for tasks that did not reach Todoist.
+   * «Recupera»: reads again everything written on every page, day by day (each day's strokes in black, the earlier
+   * ones in gray, like when you wrote them), and adds what is missing from the calendar and the tasks.
    */
-  resendToday(): number {
-    const c = this.config();
-    if (!c.enabled || !c.apiKey.trim() || !c.scriptURL || !c.secret) return 0;
-    const d = new Date();
-    const start = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  recoverAll(): number {
+    if (!this.ready()) return 0;
+    const queued = new Set(this.state.queue.map((q) => `${q.page}|${q.day}`));
     let n = 0;
     for (const r of this.store.pages.values()) {
-      const fresh = r.strokes.filter((st) => st.t >= start && st.tip !== 1 && st.pts.length >= 3);
-      if (!fresh.length) continue;
-      const png = renderNewStrokesPng(r.strokes, (st) => st.t >= start);
-      if (!png) continue;
-      const req = this.askClaude(png, Math.min(...fresh.map((st) => st.t)), c.apiKey);
-      if (!req) continue;
-      this.state.reading[req] = { page: pageId(r.key), upTo: 0, writtenAt: Math.min(...fresh.map((st) => st.t)), onlyTodos: true };
-      n++;
-      this.log(`${keyLabel(r.key)}: rileggo quello che hai scritto oggi (solo le attività senza orario)…`);
+      const id = pageId(r.key);
+      const days = [...new Set(r.strokes.filter((s) => isInk(s) && realTime(s.t)).map((s) => localDay(s.t)))].sort();
+      for (const day of days) {
+        if (queued.has(`${id}|${day}`)) continue;
+        this.state.queue.push({ page: id, day });
+        n++;
+      }
+      // from now on the normal reading starts after these strokes
+      this.state.upTo[id] = Math.max(this.state.upTo[id] ?? 0, ...r.strokes.map((s) => s.t));
     }
+    this.state.base = true;
     this.save();
+    if (n) this.log(`Recupero: rileggo ${n} ${n === 1 ? "giorno" : "giorni"} di scrittura (pagina per pagina) e aggiungo quello che manca.`);
+    this.pump();
     return n;
   }
 
-  private askClaude(png: { bytes: Uint8Array; width: number; height: number }, writtenAt: number, apiKey: string): string | null {
+  /** «Recupera»: up to two pages-days read at a time. */
+  private pump(): void {
+    if (!this.ready()) return;
+    let running = Object.values(this.state.reading).filter((r) => r.recover).length;
+    while (running < 2 && this.state.queue.length) {
+      const { page, day } = this.state.queue.shift()!;
+      const r = this.record(page);
+      if (!r) continue;
+      const start = parseYmd(day).getTime();
+      const end = start + 86_400_000;
+      const strokes = r.strokes.filter((s) => s.t < end);
+      const ofDay = (s: Stroke) => s.t >= start && s.t < end;
+      const png = renderNewStrokesPng(strokes, ofDay);
+      if (!png) continue;
+      const writtenAt = Math.min(...strokes.filter((s) => ofDay(s) && isInk(s)).map((s) => s.t));
+      const req = this.askClaude(png, writtenAt);
+      if (!req) {
+        this.state.queue.unshift({ page, day });
+        break;
+      }
+      this.state.reading[req] = { page, upTo: 0, writtenAt, recover: true };
+      running++;
+    }
+    this.save();
+  }
+
+  private record(id: string): PageRecord | undefined {
+    for (const r of this.store.pages.values()) if (pageId(r.key) === id) return r;
+    return undefined;
+  }
+
+  private askClaude(png: { bytes: Uint8Array; width: number; height: number }, writtenAt: number): string | null {
     const req = `ev-${Date.now()}-${++this.counter}`;
     const f = new File(this.dir(), `${req}.req`);
     f.create({ overwrite: true });
@@ -142,38 +200,30 @@ export class PhoneEvents {
     const ok = NeoPenBle.startBackgroundPost(
       req,
       "https://api.anthropic.com/v1/messages",
-      { "x-api-key": apiKey.trim(), "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      { "x-api-key": this.config().apiKey.trim(), "anthropic-version": "2023-06-01", "content-type": "application/json" },
       plain(f.uri)
     );
     return ok ? req : null;
   }
 
-  private sendToScript(page: string, upTo: number, events: unknown[], todos: PhoneTodo[], quiet = false): boolean {
-    const c = this.config();
-    const id = `cal-${Date.now()}-${++this.counter}`;
-    const f = new File(this.dir(), `${id}.req`);
-    f.create({ overwrite: true });
-    f.writeSync(JSON.stringify({ secret: c.secret, phone: { action: "add", page, upTo, events, todos } }));
-    if (!NeoPenBle.startBackgroundPost(id, c.scriptURL, { "Content-Type": "text/plain;charset=utf-8" }, plain(f.uri))) return false;
-    this.state.saving[id] = { page, upTo, n: events.length + todos.length, todos };
-    if (quiet) this.log(`${keyLabel(keyOf(page))}: riprovo a creare ${todos.length} ${todos.length === 1 ? "attività" : "attività"}…`);
-    return true;
-  }
-
   /** Reads the answers that arrived (also those that arrived while the app was asleep). Call often. */
   poll(): void {
     const dir = this.dir();
-    const c = this.config();
+    let changed = false;
     for (const [req, info] of Object.entries(this.state.reading)) {
-      const done = new File(dir, `${req}.done`);
-      if (!done.exists) continue;
+      if (!new File(dir, `${req}.done`).exists) continue;
+      changed = true;
       const result = this.take(req);
       delete this.state.reading[req];
       const label = keyLabel(keyOf(info.page));
+      const day = info.recover ? ` (${new Date(info.writtenAt).toLocaleDateString("it-IT", { day: "numeric", month: "short" })})` : "";
       if (!result.ok) {
+        if (info.recover) {
+          this.log(`${label}${day}: lettura non riuscita (${result.error}).`);
+          continue;
+        }
         this.state.fails[info.page] = (this.state.fails[info.page] ?? 0) + 1;
-        this.log(`${label}: lettura non riuscita (${result.error}). ${this.state.fails[info.page] >= 3 ? "Lascio fare al PC." : "Riprovo alla prossima."}`);
-        this.save();
+        this.log(`${label}: lettura non riuscita (${result.error}). ${this.state.fails[info.page] >= 3 ? "Riprovo quando scrivi ancora." : "Riprovo alla prossima."}`);
         continue;
       }
       let found: ReturnType<typeof parseTasks> | null;
@@ -183,58 +233,148 @@ export class PhoneEvents {
         found = null;
       }
       if (!found) {
-        this.state.fails[info.page] = (this.state.fails[info.page] ?? 0) + 1;
-        this.log(`${label}: risposta di Claude non leggibile.`);
-      } else if (!found.events.length && !found.todos.length) {
+        if (!info.recover) this.state.fails[info.page] = (this.state.fails[info.page] ?? 0) + 1;
+        this.log(`${label}${day}: risposta di Claude non leggibile.`);
+        continue;
+      }
+      if (!info.recover) {
         this.state.upTo[info.page] = Math.max(this.state.upTo[info.page] ?? 0, info.upTo);
         delete this.state.fails[info.page];
-        this.log(`${label}: nessuna attività nei tratti nuovi.`);
-      } else {
-        const events = info.onlyTodos ? [] : found.events;
-        const todos = found.todos;
-        if (!events.length && !todos.length) {
-          this.log(`${label}: nessuna attività senza orario.`);
-        } else if (this.sendToScript(info.page, info.upTo, events, todos)) {
-          const when = (iso: string) => new Date(iso).toLocaleString("it-IT", { weekday: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-          const parts = [
-            ...events.map((e) => `«${e.title}» ${when(e.start)} → calendario`),
-            ...todos.map((t) => `«${t.title}»${t.date ? ` (${t.date})` : ""} → attività`),
-          ];
-          this.log(`${label}: ${parts.join(", ")}…`);
+      }
+      if (!found.events.length && !found.todos.length) {
+        if (!info.recover) this.log(`${label}: nessuna attività nei tratti nuovi.`);
+        continue;
+      }
+      this.state.pending.push({ page: info.page, writtenAt: info.writtenAt, events: found.events, todos: found.todos });
+    }
+    if (changed) this.save();
+    this.pump();
+    this.flush(changed);
+  }
+
+  /** Writes what was found into the vault and the calendar (one batch at a time; what is waiting: once a minute). */
+  flush(force = false): void {
+    if (!this.state.pending.length) return;
+    if (!force && Date.now() - this.lastFlush < 60_000) return;
+    this.lastFlush = Date.now();
+    this.work = this.work.then(() => this.deliverAll()).catch((e) => this.log(`Penna → attività: ${e instanceof Error ? e.message : String(e)}`));
+  }
+
+  private async deliverAll(): Promise<void> {
+    if (!this.state.pending.length) return;
+    // iOS keeps the app awake while the notes and events are written (also with the phone locked)
+    const task = NeoPenBle.beginBackgroundTask("penna-attivita");
+    const items = this.state.pending;
+    this.state.pending = [];
+    try {
+      const keep: Found[] = [];
+      const made = new Set(this.state.made);
+      // 1) tasks without a time → daily notes
+      const todos = items.filter((f) => f.todos.length);
+      if (todos.length) {
+        if (!agenda.vaultName()) {
+          keep.push(...todos.map((f) => ({ ...f, events: [] })));
+          this.tellOnce("vault", "Attività dalla penna in attesa: scegli la cartella del vault (Oggi → Scegli la cartella) e le aggiungo.");
+        } else {
+          const left = await this.writeTodos(todos, made);
+          keep.push(...left);
         }
       }
-      this.save();
-    }
-    for (const [req, info] of Object.entries(this.state.saving)) {
-      if (!new File(dir, `${req}.done`).exists) continue;
-      const result = this.take(req);
-      delete this.state.saving[req];
-      // even on error the strokes count as handled: better a missing event (the PC adds it) than a duplicate
-      this.state.upTo[info.page] = Math.max(this.state.upTo[info.page] ?? 0, info.upTo);
-      delete this.state.fails[info.page];
-      let answer: { ok?: boolean; created?: number; todos?: number; todoError?: string; error?: string; results?: unknown } = {};
-      try {
-        answer = JSON.parse(result.body);
-      } catch {
-        /* checked below */
+      // 2) tasks with a time → iPhone calendar
+      for (const f of items.filter((x) => x.events.length)) {
+        const left = await this.writeEvents(f, made);
+        if (left.length) keep.push({ ...f, todos: [], events: left });
       }
-      const label = keyLabel(keyOf(info.page));
-      if (result.ok && answer.ok && typeof answer.created === "number") {
-        const bits = [
-          answer.created ? `${answer.created} ${answer.created === 1 ? "evento creato" : "eventi creati"} nel calendario` : "",
-          answer.todos ? `${answer.todos} ${answer.todos === 1 ? "attività creata" : "attività create"}` : "",
-        ].filter(Boolean);
-        this.log(`${label}: ${bits.join(", ") || "niente da creare"}.${answer.todoError ? ` Attività: ${answer.todoError}` : ""}`);
-        // nessuna attività creata per un errore (es. Todoist non autorizzato): si riprovano più tardi
-        if (answer.todoError && !answer.todos && info.todos?.length) {
-          this.state.retry.push({ page: info.page, upTo: info.upTo, todos: info.todos });
-          this.log(`${label}: riproverò a creare ${info.todos.length === 1 ? "l'attività" : `le ${info.todos.length} attività`} alla prossima chiusura della penna.`);
+      this.state.made = [...made].slice(-3000);
+      this.state.pending.push(...keep);
+      this.save();
+      agenda.changedOutside();
+    } catch (e) {
+      // nothing is lost: tried again at the next answer or when the app opens
+      this.state.pending.unshift(...items);
+      this.save();
+      throw e;
+    } finally {
+      NeoPenBle.endBackgroundTask(task);
+    }
+  }
+
+  private async writeTodos(items: Found[], made: Set<string>): Promise<Found[]> {
+    const tasks = await agenda.freshTasks();
+    const cfg = agenda.dailyNotes();
+    // by day of writing → one write per daily note
+    const byDay = new Map<string, { title: string; date: string; page: string }[]>();
+    for (const f of items) {
+      const day = localDay(f.writtenAt);
+      const label = keyLabel(keyOf(f.page));
+      for (const t of f.todos) {
+        const due = t.date || day;
+        const key = `t|${looseTitle(t.title)}|${due}`;
+        const there = tasks.find((x) => sameTitle(x.title, t.title) && (!x.date || Math.abs(parseYmd(x.date).getTime() - parseYmd(due).getTime()) <= 3 * 86_400_000));
+        if (made.has(key) || there) {
+          this.log(`${label}: «${t.title}» c'è già nelle attività.`);
+          made.add(key);
+          continue;
         }
+        const list = byDay.get(day) ?? [];
+        if (!list.some((x) => sameTitle(x.title, t.title))) list.push({ ...t, page: label });
+        byDay.set(day, list);
       }
-      else if (answer.results !== undefined) this.log(`${label}: lo script Google è una versione vecchia. In Obsidian sul PC: Impostazioni → Neo Pen → copia di nuovo lo script e ripubblicalo.`);
-      else this.log(`${label}: calendario non aggiornato (${answer.error ?? result.error ?? "risposta non valida"}). Lo farà il PC.`);
-      this.save();
     }
+    const left: Found[] = [];
+    let template: string | null | undefined;
+    for (const [day, list] of byDay) {
+      const path = dailyPath(cfg, day);
+      const text = await NeoPenBle.readVaultFile(path);
+      if (text === null && template === undefined) template = await agenda.templateText();
+      const next = addToDaily(text, list, day, text === null ? template ?? null : null);
+      const err = agenda.writeFile(path, next);
+      if (err) {
+        this.log(`Non riesco a scrivere «${path}»: ${err}. Riprovo più tardi.`);
+        left.push({ page: items[0].page, writtenAt: parseYmd(day).getTime() + 12 * 3_600_000, events: [], todos: list.map(({ title, date }) => ({ title, date })) });
+        continue;
+      }
+      for (const t of list) made.add(`t|${looseTitle(t.title)}|${t.date || day}`);
+      const note = path.replace(/\.md$/, "").split("/").pop();
+      this.log(`${list.map((t) => `«${t.title}»${t.date && t.date !== day ? ` (📅 ${t.date})` : ""}`).join(", ")} → attività (nota del giorno ${note}).`);
+    }
+    return left;
+  }
+
+  private async writeEvents(f: Found, made: Set<string>): Promise<PhoneEvent[]> {
+    const label = keyLabel(keyOf(f.page));
+    const left: PhoneEvent[] = [];
+    for (const e of f.events) {
+      const start = new Date(e.start);
+      const key = `e|${looseTitle(e.title)}|${start.toISOString().slice(0, 16)}`;
+      if (made.has(key)) continue;
+      const when = start.toLocaleString("it-IT", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+      const r = await agenda.penEvent({ title: e.title, start, end: e.end ? new Date(e.end) : null, note: `Scritto con la penna (pagina ${label}).` }, this.config().calendarId || null);
+      if (r === "noAccess") {
+        left.push(e);
+        this.tellOnce("cal", "Eventi dalla penna in attesa: apri l'app e consenti l'accesso al calendario (Calendario → Consenti), poi li aggiungo.");
+        continue;
+      }
+      if (r === "created" || r === "exists") {
+        made.add(key);
+        this.log(r === "created" ? `${label}: «${e.title}» ${when} → calendario.` : `${label}: «${e.title}» ${when} c'è già nel calendario.`);
+        continue;
+      }
+      left.push(e);
+      this.log(`${label}: evento «${e.title}» non creato (${r}). Riprovo più tardi.`);
+    }
+    return left;
+  }
+
+  private tellOnce(what: string, message: string): void {
+    if (this.told.has(what)) return;
+    this.told.add(what);
+    this.log(message);
+  }
+
+  /** How many things are waiting (for the settings screen). */
+  get waiting(): { reading: number; queue: number; pending: number } {
+    return { reading: Object.keys(this.state.reading).length, queue: this.state.queue.length, pending: this.state.pending.reduce((n, f) => n + f.events.length + f.todos.length, 0) };
   }
 
   /** Answer of a finished request; its files are removed. */
