@@ -1,307 +1,328 @@
-// "Calendario": day, week and month, with events (iPhone calendars) and dated tasks (vault).
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
-import type { ScrollViewInstance } from "react-native";
+// "Calendario": the whole month on one screen, a dot under the days with something on (events of the iPhone
+// calendars, tasks of the vault). Tap a day → that day: all-day events, then the timeline (events and tasks with a
+// time, in order), then the tasks of the day. Swipe left/right to change month or day.
+import { useEffect, useRef, useState } from "react";
+import { GestureResponderEvent, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { agenda, CalEvent, visibleEvents } from "../../app/agenda";
 import { onDay } from "../../core/taskStore";
 import { VaultTask, addDays, parseYmd, ymd } from "../../core/tasks";
-import { C, Check, PRIORITY_COLOR, Segmented, hm, monthLong, today, useAgenda } from "./common";
-import { DayAgenda } from "./today";
+import { C, Check, Empty, PRIORITY_COLOR, SectionHeader, TaskRow, dayLabel, hm, monthLong, today, useAgenda } from "./common";
 
-type Mode = "day" | "week" | "month";
-const HOUR = 52;
-
-const minutesOf = (d: Date) => d.getHours() * 60 + d.getMinutes();
-const tMin = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+const WEEK = ["lun", "mar", "mer", "gio", "ven", "sab", "dom"];
+const WD_LONG = ["domenica", "lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato"];
+const cap = (x: string) => x.replace(/^\p{L}/u, (c) => c.toUpperCase());
 
 /** Monday of the week of `d`. */
 function weekStart(d: string): string {
-  const wd = (parseYmd(d).getDay() + 6) % 7;
-  return addDays(d, -wd);
+  return addDays(d, -((parseYmd(d).getDay() + 6) % 7));
 }
 
-interface Block {
+/** Loads the events of the days from..to (again when the calendar changes). */
+function useEvents(from: string, to: string) {
+  const a = useAgenda();
+  useEffect(() => {
+    void agenda.loadEvents(parseYmd(from), parseYmd(to));
+  }, [from, to, a.eventsEpoch, a.calendarAccess, a.calendars.length]);
+}
+
+/** Horizontal swipe (left = next, right = previous); taps are left alone. */
+function useSwipe(onPrev: () => void, onNext: () => void) {
+  const start = useRef<{ x: number; y: number } | null>(null);
+  return {
+    onTouchStart: (e: GestureResponderEvent) => {
+      start.current = { x: e.nativeEvent.pageX, y: e.nativeEvent.pageY };
+    },
+    onTouchEnd: (e: GestureResponderEvent) => {
+      const s = start.current;
+      start.current = null;
+      if (!s) return;
+      const dx = e.nativeEvent.pageX - s.x;
+      const dy = e.nativeEvent.pageY - s.y;
+      if (Math.abs(dx) > 60 && Math.abs(dx) > 1.5 * Math.abs(dy)) (dx < 0 ? onNext : onPrev)();
+    },
+  };
+}
+
+function CalendarAccess() {
+  const a = useAgenda();
+  if (a.calendarAccess === "granted") return null;
+  return (
+    <Pressable onPress={() => void agenda.initCalendar(true)} style={st.banner}>
+      <Text style={st.bannerText}>
+        {a.calendarAccess === "denied"
+          ? "Accesso ai calendari negato: Impostazioni di iPhone → NeoTransfer → Calendari → Accesso completo."
+          : "Tocca qui per mostrare i calendari dell'iPhone (Google, iCloud…)."}
+      </Text>
+    </Pressable>
+  );
+}
+
+// ---------------------------------------------------------------- month
+
+function MonthScreen({ month, onMonth, onOpen, onAdd }: { month: string; onMonth: (m: string) => void; onOpen: (d: string) => void; onAdd: () => void }) {
+  const a = useAgenda();
+  const m = parseYmd(month);
+  const first = ymd(new Date(m.getFullYear(), m.getMonth(), 1));
+  const last = ymd(new Date(m.getFullYear(), m.getMonth() + 1, 0));
+  const start = weekStart(first);
+  const rows = Math.ceil((((parseYmd(first).getDay() + 6) % 7) + parseYmd(last).getDate()) / 7);
+  const days = Array.from({ length: rows * 7 }, (_, i) => addDays(start, i));
+  useEvents(days[0], days[days.length - 1]);
+  const [height, setHeight] = useState(0);
+  const go = (n: number) => onMonth(ymd(new Date(m.getFullYear(), m.getMonth() + n, 1)));
+  const swipe = useSwipe(() => go(-1), () => go(1));
+  const t = today();
+  const thisMonth = month === ymd(new Date(parseYmd(t).getFullYear(), parseYmd(t).getMonth(), 1));
+
+  return (
+    <View style={{ flex: 1 }}>
+      <View style={st.nav}>
+        <Pressable onPress={() => go(-1)} hitSlop={14}>
+          <Text style={st.arrow}>‹</Text>
+        </Pressable>
+        <View style={{ flex: 1, alignItems: "center" }}>
+          <Text style={st.monthTitle}>{cap(monthLong(m.getMonth()))}</Text>
+          <Text style={st.year}>{m.getFullYear()}</Text>
+        </View>
+        <Pressable onPress={() => go(1)} hitSlop={14}>
+          <Text style={st.arrow}>›</Text>
+        </Pressable>
+      </View>
+      <View style={st.tools}>
+        <Pressable onPress={() => onMonth(ymd(new Date(parseYmd(t).getFullYear(), parseYmd(t).getMonth(), 1)))} disabled={thisMonth} style={[st.pill, thisMonth && { opacity: 0.35 }]}>
+          <Text style={st.pillText}>Oggi</Text>
+        </Pressable>
+        <Pressable onPress={onAdd} style={[st.pill, st.pillAdd]}>
+          <Text style={[st.pillText, { color: "#fff" }]}>+ Nuovo</Text>
+        </Pressable>
+      </View>
+      <CalendarAccess />
+      <View style={st.weekHead}>
+        {WEEK.map((w, i) => (
+          <Text key={w} style={[st.weekHeadText, i >= 5 && { color: C.accent }]}>
+            {w}
+          </Text>
+        ))}
+      </View>
+      <View style={{ flex: 1 }} onLayout={(e) => setHeight(e.nativeEvent.layout.height)} {...swipe}>
+        {height > 0
+          ? Array.from({ length: rows }, (_, r) => (
+              <View key={r} style={[st.weekRow, { height: (height - 4) / rows }]}>
+                {days.slice(r * 7, r * 7 + 7).map((d) => {
+                  const inMonth = parseYmd(d).getMonth() === m.getMonth();
+                  const evs = visibleEvents(a, d);
+                  const open = a.tasks.filter((x) => x.date === d && !x.done).length;
+                  const busy = evs.length > 0 || open > 0;
+                  const isToday = d === t;
+                  return (
+                    <Pressable key={d} onPress={() => onOpen(d)} style={({ pressed }) => [st.cell, pressed && { backgroundColor: C.line }]}>
+                      <View style={[st.num, isToday && { backgroundColor: C.accent }]}>
+                        <Text style={[st.numText, !inMonth && { color: C.faint }, isToday && { color: "#fff", fontWeight: "700" }]}>{parseYmd(d).getDate()}</Text>
+                      </View>
+                      {busy ? <View style={[st.dot, { backgroundColor: inMonth ? C.text : C.faint }]} /> : <View style={st.noDot} />}
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ))
+          : null}
+      </View>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------- day
+
+interface Timed {
   key: string;
-  top: number;
-  height: number;
-  col: number;
-  cols: number;
+  min: number;
+  from: string;
+  to: string;
   title: string;
   color: string;
   ev?: CalEvent;
   task?: VaultTask;
-  time: string;
 }
 
-/** Timed events and tasks of a day, laid out side by side when they overlap. */
-function layout(day: string, events: CalEvent[], tasks: VaultTask[]): Block[] {
-  const items: Omit<Block, "col" | "cols">[] = [];
+const tMin = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+
+function timeline(day: string, events: CalEvent[], tasks: VaultTask[]): Timed[] {
+  const out: Timed[] = [];
   for (const e of events) {
     if (e.allDay) continue;
-    const startsToday = ymd(e.start) === day;
-    const endsToday = ymd(e.end) === day;
-    const a = startsToday ? minutesOf(e.start) : 0;
-    const b = endsToday ? Math.max(a + 20, minutesOf(e.end)) : 24 * 60;
-    items.push({ key: `e${e.id}${e.start.getTime()}`, top: (a / 60) * HOUR, height: Math.max(22, ((b - a) / 60) * HOUR - 2), title: e.title, color: e.color, ev: e, time: hm(e.start) });
+    const starts = ymd(e.start) === day;
+    const ends = ymd(e.end) === day;
+    out.push({
+      key: `e${e.id}${e.start.getTime()}`,
+      min: starts ? e.start.getHours() * 60 + e.start.getMinutes() : 0,
+      from: starts ? hm(e.start) : "…",
+      to: ends ? hm(e.end) : "…",
+      title: e.title,
+      color: e.color,
+      ev: e,
+    });
   }
   for (const t of tasks) {
     if (!t.time) continue;
-    const a = tMin(t.time);
-    const b = t.end ? Math.max(a + 20, tMin(t.end)) : a + 30;
-    items.push({ key: `t${t.id}`, top: (a / 60) * HOUR, height: Math.max(22, ((b - a) / 60) * HOUR - 2), title: t.title, color: PRIORITY_COLOR[t.priority], task: t, time: t.time });
+    out.push({ key: `t${t.id}`, min: tMin(t.time), from: t.time, to: t.end ?? "", title: t.title, color: PRIORITY_COLOR[t.priority], task: t });
   }
-  items.sort((x, y) => x.top - y.top);
-  const out: Block[] = [];
-  let group: Block[] = [];
-  let groupEnd = -1;
-  const flush = () => {
-    const cols = Math.max(1, ...group.map((g) => g.col + 1));
-    for (const g of group) out.push({ ...g, cols });
-    group = [];
-  };
-  for (const it of items) {
-    if (it.top >= groupEnd) {
-      flush();
-      groupEnd = -1;
-    }
-    const used = new Set(group.filter((g) => g.top + g.height > it.top).map((g) => g.col));
-    let col = 0;
-    while (used.has(col)) col++;
-    group.push({ ...it, col, cols: 1 });
-    groupEnd = Math.max(groupEnd, it.top + it.height);
-  }
-  flush();
-  return out;
+  return out.sort((x, y) => x.min - y.min || x.title.localeCompare(y.title));
 }
 
-function HourGrid({ days, onTask, onEvent, compact }: { days: string[]; onTask: (t: VaultTask) => void; onEvent: (e: CalEvent) => void; compact?: boolean }) {
+function TimedRow({ item, onTask, onEvent }: { item: Timed; onTask: (t: VaultTask) => void; onEvent: (e: CalEvent) => void }) {
+  const done = item.task ? item.task.done : /^\s*✓/.test(item.title);
+  return (
+    <Pressable onPress={() => (item.ev ? onEvent(item.ev) : item.task ? onTask(item.task) : undefined)} style={({ pressed }) => [st.timed, pressed && { backgroundColor: C.line }]}>
+      <View style={st.time}>
+        <Text style={st.timeFrom}>{item.from}</Text>
+        {item.to ? <Text style={st.timeTo}>{item.to}</Text> : null}
+      </View>
+      <View style={[st.bar, { backgroundColor: item.color }]} />
+      {item.task ? <Check done={item.task.done} priority={item.task.priority} onPress={() => void agenda.toggle(item.task!)} /> : null}
+      <Text style={[st.timedTitle, done && st.done]} numberOfLines={3}>
+        {item.title}
+      </Text>
+    </Pressable>
+  );
+}
+
+function DayScreen({ day, onGo, onBack, onTask, onEvent }: { day: string; onGo: (d: string) => void; onBack: () => void; onTask: (t: VaultTask) => void; onEvent: (e: CalEvent) => void }) {
   const a = useAgenda();
-  const { width } = useWindowDimensions();
-  const gutter = 44;
-  const colW = (width - gutter) / days.length;
-  const scroll = useRef<ScrollViewInstance>(null);
-  useEffect(() => {
-    const now = new Date();
-    scroll.current?.scrollTo({ y: Math.max(0, (now.getHours() - 1.5) * HOUR), animated: false });
-  }, []);
+  useEvents(addDays(day, -1), addDays(day, 1));
+  const swipe = useSwipe(() => onGo(addDays(day, -1)), () => onGo(addDays(day, 1)));
+  const evs = visibleEvents(a, day);
+  const allDay = evs.filter((e) => e.allDay);
+  const tasks = onDay(a.tasks, day);
+  const items = timeline(day, evs, tasks);
+  const untimed = tasks.filter((x) => !x.time);
+  const d = parseYmd(day);
   const t = today();
-  const now = new Date();
+  const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
+  const nowAt = day === t ? items.findIndex((x) => x.min > nowMin) : -2;
+  const label = dayLabel(day);
+  const relative = label === "Oggi" || label === "Domani" || label === "Ieri" ? label : null;
+
   return (
     <View style={{ flex: 1 }}>
-      {/* all day: events and tasks without a time */}
-      <View style={[st.allDay, { paddingLeft: gutter }]}>
-        {days.map((d) => {
-          const evs = visibleEvents(a, d).filter((e) => e.allDay);
-          const tasks = onDay(a.tasks, d).filter((x) => !x.time);
-          return (
-            <View key={d} style={{ width: colW, paddingHorizontal: 1, gap: 2 }}>
-              {evs.map((e) => (
-                <Pressable key={e.id} onPress={() => onEvent(e)} style={[st.allDayItem, { backgroundColor: e.color + "33", borderLeftColor: e.color }]}>
-                  <Text numberOfLines={1} style={st.blockText}>
-                    {e.title}
-                  </Text>
-                </Pressable>
-              ))}
-              {tasks.slice(0, compact ? 3 : 8).map((x) => (
-                <Pressable key={x.id} onPress={() => onTask(x)} style={st.allDayTask}>
-                  {!compact ? <Check done={x.done} priority={x.priority} onPress={() => void agenda.toggle(x)} /> : null}
-                  <Text numberOfLines={1} style={[st.blockText, { flex: 1 }, x.done && { color: C.faint, textDecorationLine: "line-through" }]}>
-                    {compact ? (x.done ? "✓ " : "○ ") : ""}
-                    {x.title}
-                  </Text>
-                </Pressable>
-              ))}
-              {compact && tasks.length > 3 ? <Text style={st.more}>+{tasks.length - 3}</Text> : null}
-            </View>
-          );
-        })}
+      <View style={st.dayNav}>
+        <Pressable onPress={onBack} hitSlop={12}>
+          <Text style={st.back}>‹ {cap(monthLong(d.getMonth()))}</Text>
+        </Pressable>
+        <View style={{ flexDirection: "row", gap: 22 }}>
+          <Pressable onPress={() => onGo(addDays(day, -1))} hitSlop={12}>
+            <Text style={st.arrowSmall}>‹</Text>
+          </Pressable>
+          <Pressable onPress={() => onGo(addDays(day, 1))} hitSlop={12}>
+            <Text style={st.arrowSmall}>›</Text>
+          </Pressable>
+        </View>
       </View>
-      <ScrollView ref={scroll} contentContainerStyle={{ height: HOUR * 24 + 20 }}>
-        {Array.from({ length: 24 }, (_, h) => (
-          <View key={h} style={[st.hourRow, { top: h * HOUR }]}>
-            <Text style={st.hourText}>{h === 0 ? "" : `${String(h).padStart(2, "0")}:00`}</Text>
-            <View style={st.hourLine} />
+      <View style={st.dayHead}>
+        <Text style={st.dayTitle}>
+          {cap(WD_LONG[d.getDay()])} {d.getDate()}
+        </Text>
+        <Text style={st.daySub}>
+          {relative ? `${relative} · ` : ""}
+          {monthLong(d.getMonth())} {d.getFullYear()}
+        </Text>
+      </View>
+      <CalendarAccess />
+      <ScrollView
+        {...swipe}
+        refreshControl={<RefreshControl refreshing={a.loading} onRefresh={() => void agenda.changedOutside()} />}
+        contentContainerStyle={{ paddingBottom: 140 }}
+      >
+        {allDay.length ? <SectionHeader title="Tutto il giorno" /> : null}
+        {allDay.map((e) => (
+          <Pressable key={`${e.id}-${e.start.getTime()}`} onPress={() => onEvent(e)} style={({ pressed }) => [st.timed, pressed && { backgroundColor: C.line }]}>
+            <View style={[st.bar, { backgroundColor: e.color, marginLeft: 16 }]} />
+            <Text style={[st.timedTitle, /^\s*✓/.test(e.title) && st.done]} numberOfLines={2}>
+              {e.title}
+            </Text>
+          </Pressable>
+        ))}
+
+        {items.length ? <SectionHeader title="Programma" right={`${items.length}`} /> : null}
+        {items.map((x, i) => (
+          <View key={x.key}>
+            {i === nowAt ? <NowLine /> : null}
+            <TimedRow item={x} onTask={onTask} onEvent={onEvent} />
           </View>
         ))}
-        {days.map((d, i) => (
-          <View key={d} style={{ position: "absolute", left: gutter + i * colW, width: colW, top: 0, height: HOUR * 24, borderLeftWidth: days.length > 1 ? StyleSheet.hairlineWidth : 0, borderLeftColor: C.line }}>
-            {layout(d, visibleEvents(a, d), onDay(a.tasks, d)).map((b) => (
-              <Pressable
-                key={b.key}
-                onPress={() => (b.ev ? onEvent(b.ev) : b.task ? onTask(b.task) : undefined)}
-                style={[
-                  st.block,
-                  {
-                    top: b.top,
-                    height: b.height,
-                    left: (b.col * (colW - 2)) / b.cols + 1,
-                    width: (colW - 2) / b.cols - 1,
-                    backgroundColor: b.ev ? b.color + "33" : "#fff",
-                    borderLeftColor: b.color,
-                    borderStyle: b.task ? "dashed" : "solid",
-                    borderWidth: b.task ? 1 : 0,
-                    borderColor: b.color,
-                  },
-                ]}
-              >
-                <Text numberOfLines={compact ? 3 : 2} style={[st.blockText, b.task?.done && { textDecorationLine: "line-through", color: C.faint }]}>
-                  {b.task ? (b.task.done ? "✓ " : "○ ") : ""}
-                  {b.title}
-                </Text>
-                {!compact && b.height > 36 ? <Text style={st.blockTime}>{b.time}</Text> : null}
-              </Pressable>
-            ))}
-            {d === t ? <View style={[st.nowLine, { top: (minutesOf(now) / 60) * HOUR }]} /> : null}
-          </View>
+        {items.length && nowAt === -1 ? <NowLine /> : null}
+
+        {untimed.length ? <SectionHeader title="Attività" right={`${untimed.filter((x) => !x.done).length} da fare`} /> : null}
+        {untimed.map((x) => (
+          <TaskRow key={x.id} task={x} onPress={() => onTask(x)} />
         ))}
+
+        {!allDay.length && !items.length && !untimed.length ? <Empty text="Niente in programma. Tocca + per aggiungere." /> : null}
       </ScrollView>
     </View>
   );
 }
 
-function MonthGrid({ month, selected, onSelect }: { month: Date; selected: string; onSelect: (d: string) => void }) {
-  const a = useAgenda();
-  const first = ymd(new Date(month.getFullYear(), month.getMonth(), 1));
-  const start = weekStart(first);
-  const days = Array.from({ length: 42 }, (_, i) => addDays(start, i));
-  const t = today();
+function NowLine() {
   return (
-    <View>
-      <View style={st.monthHead}>
-        {["lun", "mar", "mer", "gio", "ven", "sab", "dom"].map((w) => (
-          <Text key={w} style={st.monthHeadText}>
-            {w}
-          </Text>
-        ))}
-      </View>
-      <View style={st.monthGrid}>
-        {days.map((d) => {
-          const inMonth = parseYmd(d).getMonth() === month.getMonth();
-          const evs = visibleEvents(a, d);
-          const tasks = a.tasks.filter((x) => x.date === d && !x.done).length;
-          const on = d === selected;
-          return (
-            <Pressable key={d} onPress={() => onSelect(d)} style={st.monthCell}>
-              <View style={[st.monthNum, on && { backgroundColor: d === t ? C.accent : C.text }]}>
-                <Text style={[st.monthNumText, !inMonth && { color: C.faint }, d === t && !on && { color: C.accent, fontWeight: "700" }, on && { color: "#fff" }]}>{parseYmd(d).getDate()}</Text>
-              </View>
-              <View style={st.monthDots}>
-                {evs.slice(0, 3).map((e, i) => (
-                  <View key={i} style={[st.mdot, { backgroundColor: e.color }]} />
-                ))}
-                {tasks ? <View style={[st.mdot, { backgroundColor: "transparent", borderWidth: 1, borderColor: C.sub }]} /> : null}
-              </View>
-            </Pressable>
-          );
-        })}
-      </View>
+    <View style={st.now}>
+      <Text style={st.nowText}>{hm(new Date())}</Text>
+      <View style={st.nowLine} />
     </View>
   );
 }
 
-export function CalendarScreen({ onTask, onEvent, onDayChange }: { onTask: (t: VaultTask) => void; onEvent: (e: CalEvent) => void; onDayChange: (d: string) => void }) {
-  const a = useAgenda();
-  const [mode, setMode] = useState<Mode>("week");
-  const [day, setDay] = useState(today());
+// ---------------------------------------------------------------- screen
+
+export function CalendarScreen({ onTask, onEvent, onDayChange, onAdd }: { onTask: (t: VaultTask) => void; onEvent: (e: CalEvent) => void; onDayChange: (d: string | null) => void; onAdd: () => void }) {
+  const t = today();
+  const [month, setMonth] = useState(ymd(new Date(parseYmd(t).getFullYear(), parseYmd(t).getMonth(), 1)));
+  const [day, setDay] = useState<string | null>(null);
   useEffect(() => onDayChange(day), [day]);
-  const month = useMemo(() => new Date(parseYmd(day).getFullYear(), parseYmd(day).getMonth(), 1), [day]);
-  const days = mode === "day" ? [day] : Array.from({ length: 7 }, (_, i) => addDays(weekStart(day), i));
-
-  useEffect(() => {
-    if (mode === "month") {
-      const s = weekStart(ymd(month));
-      void agenda.loadEvents(parseYmd(s), parseYmd(addDays(s, 42)));
-    } else void agenda.loadEvents(parseYmd(days[0]), parseYmd(days[days.length - 1]));
-  }, [mode, day, a.calendarAccess, a.calendars.length, Object.keys(a.events).length === 0]);
-
-  const step = (n: number) => {
-    if (mode === "day") setDay(addDays(day, n));
-    else if (mode === "week") setDay(addDays(day, 7 * n));
-    else setDay(ymd(new Date(month.getFullYear(), month.getMonth() + n, 1)));
+  const openDay = (d: string) => {
+    setDay(d);
+    const x = parseYmd(d);
+    setMonth(ymd(new Date(x.getFullYear(), x.getMonth(), 1)));
   };
-  const title =
-    mode === "month" || mode === "week"
-      ? `${monthLong(parseYmd(days[mode === "week" ? 3 : 0] ?? day).getMonth())} ${parseYmd(mode === "week" ? days[3] : day).getFullYear()}`
-      : `${parseYmd(day).getDate()} ${monthLong(parseYmd(day).getMonth())}`;
-
-  return (
-    <View style={{ flex: 1 }}>
-      <View style={st.nav}>
-        <Pressable onPress={() => step(-1)} hitSlop={12}>
-          <Text style={st.arrow}>‹</Text>
-        </Pressable>
-        <Text style={st.navTitle}>{title.replace(/^\w/, (c) => c.toUpperCase())}</Text>
-        <Pressable onPress={() => step(1)} hitSlop={12}>
-          <Text style={st.arrow}>›</Text>
-        </Pressable>
-        <Pressable onPress={() => setDay(today())} style={st.todayBtn}>
-          <Text style={st.todayText}>Oggi</Text>
-        </Pressable>
-      </View>
-      <Segmented
-        value={mode}
-        onChange={setMode}
-        options={[
-          { value: "day", label: "Giorno" },
-          { value: "week", label: "Settimana" },
-          { value: "month", label: "Mese" },
-        ]}
-      />
-      {a.calendarAccess !== "granted" ? (
-        <Pressable onPress={() => void agenda.initCalendar(true)} style={st.banner}>
-          <Text style={st.bannerText}>{a.calendarAccess === "denied" ? "Accesso ai calendari negato: Impostazioni di iPhone → NeoTransfer → Calendari → Accesso completo." : "Tocca qui per mostrare i calendari dell'iPhone (Google, iCloud…)."}</Text>
-        </Pressable>
-      ) : null}
-      {mode === "week" ? (
-        <View style={[st.weekHead, { paddingLeft: 44 }]}>
-          {days.map((d) => (
-            <Pressable key={d} style={{ flex: 1, alignItems: "center" }} onPress={() => (setDay(d), setMode("day"))}>
-              <Text style={[st.weekWd, d === today() && { color: C.accent }]}>{["dom", "lun", "mar", "mer", "gio", "ven", "sab"][parseYmd(d).getDay()]}</Text>
-              <Text style={[st.weekNum, d === today() && { color: C.accent }]}>{parseYmd(d).getDate()}</Text>
-            </Pressable>
-          ))}
-        </View>
-      ) : null}
-      {mode === "month" ? (
-        <ScrollView contentContainerStyle={{ paddingBottom: 120 }}>
-          <MonthGrid month={month} selected={day} onSelect={setDay} />
-          <DayAgenda day={day} onTask={onTask} onEvent={onEvent} />
-        </ScrollView>
-      ) : (
-        <HourGrid days={days} onTask={onTask} onEvent={onEvent} compact={mode === "week"} />
-      )}
-    </View>
+  return day ? (
+    <DayScreen day={day} onGo={openDay} onBack={() => setDay(null)} onTask={onTask} onEvent={onEvent} />
+  ) : (
+    <MonthScreen month={month} onMonth={setMonth} onOpen={openDay} onAdd={onAdd} />
   );
 }
 
 const st = StyleSheet.create({
-  nav: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingTop: 8, gap: 14 },
-  arrow: { fontSize: 30, color: C.accent, lineHeight: 32 },
-  navTitle: { fontSize: 24, fontWeight: "700", color: C.text, flex: 1, textAlign: "center" },
-  todayBtn: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, borderWidth: 1, borderColor: C.accent },
-  todayText: { color: C.accent, fontWeight: "600", fontSize: 13 },
+  nav: { flexDirection: "row", alignItems: "center", paddingHorizontal: 20, paddingTop: 6 },
+  arrow: { fontSize: 34, color: C.accent, lineHeight: 38, paddingHorizontal: 6 },
+  monthTitle: { fontSize: 28, fontWeight: "700", color: C.text },
+  year: { fontSize: 13, color: C.sub, marginTop: -2 },
+  tools: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: 8, paddingBottom: 10 },
+  pill: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16, borderWidth: 1, borderColor: C.accent },
+  pillAdd: { backgroundColor: C.accent },
+  pillText: { color: C.accent, fontWeight: "600", fontSize: 14 },
   banner: { marginHorizontal: 16, marginBottom: 8, padding: 12, borderRadius: 10, backgroundColor: "#FFF4E5" },
   bannerText: { color: "#8A4B00", fontSize: 14 },
-  weekHead: { flexDirection: "row", paddingBottom: 4 },
-  weekWd: { fontSize: 11, color: C.sub, textTransform: "uppercase" },
-  weekNum: { fontSize: 17, fontWeight: "600", color: C.text },
-  allDay: { flexDirection: "row", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.line, paddingVertical: 4, backgroundColor: C.card, minHeight: 8 },
-  allDayItem: { borderLeftWidth: 3, borderRadius: 4, paddingHorizontal: 4, paddingVertical: 2 },
-  allDayTask: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 4, paddingVertical: 2 },
-  more: { fontSize: 11, color: C.sub, paddingHorizontal: 4 },
-  hourRow: { position: "absolute", left: 0, right: 0, flexDirection: "row", alignItems: "center", height: 1 },
-  hourText: { width: 44, fontSize: 11, color: C.faint, textAlign: "right", paddingRight: 6, marginTop: -1 },
-  hourLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: C.line },
-  block: { position: "absolute", borderLeftWidth: 3, borderRadius: 5, paddingHorizontal: 4, paddingVertical: 2, overflow: "hidden" },
-  blockText: { fontSize: 12, color: C.text, fontWeight: "500" },
-  blockTime: { fontSize: 11, color: C.sub },
-  nowLine: { position: "absolute", left: 0, right: 0, height: 2, backgroundColor: C.accent },
-  monthHead: { flexDirection: "row", paddingHorizontal: 8 },
-  monthHeadText: { flex: 1, textAlign: "center", fontSize: 12, color: C.sub, textTransform: "uppercase" },
-  monthGrid: { flexDirection: "row", flexWrap: "wrap", paddingHorizontal: 8 },
-  monthCell: { width: `${100 / 7}%`, alignItems: "center", paddingVertical: 6 },
-  monthNum: { width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center" },
-  monthNumText: { fontSize: 16, color: C.text },
-  monthDots: { flexDirection: "row", gap: 2, height: 6, marginTop: 2 },
-  mdot: { width: 5, height: 5, borderRadius: 3 },
+  weekHead: { flexDirection: "row", paddingHorizontal: 8, paddingBottom: 6, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.line },
+  weekHeadText: { flex: 1, textAlign: "center", fontSize: 12, color: C.sub, textTransform: "uppercase", fontWeight: "600" },
+  weekRow: { flexDirection: "row", paddingHorizontal: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.line },
+  cell: { flex: 1, alignItems: "center", paddingTop: 8, borderRadius: 10 },
+  num: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center" },
+  numText: { fontSize: 18, color: C.text, fontVariant: ["tabular-nums"] },
+  dot: { width: 6, height: 6, borderRadius: 3, marginTop: 5 },
+  noDot: { height: 6, marginTop: 5 },
+  dayNav: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: 8 },
+  back: { fontSize: 17, color: C.accent },
+  arrowSmall: { fontSize: 28, color: C.accent, lineHeight: 30 },
+  dayHead: { paddingHorizontal: 16, paddingTop: 6, paddingBottom: 6 },
+  dayTitle: { fontSize: 32, fontWeight: "700", color: C.text },
+  daySub: { fontSize: 15, color: C.sub, marginTop: 2 },
+  timed: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 11, paddingRight: 16, backgroundColor: C.card, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.line },
+  time: { width: 62, alignItems: "flex-end" },
+  timeFrom: { fontSize: 15, color: C.text, fontWeight: "600", fontVariant: ["tabular-nums"] },
+  timeTo: { fontSize: 12, color: C.faint, fontVariant: ["tabular-nums"] },
+  bar: { width: 4, alignSelf: "stretch", borderRadius: 2 },
+  timedTitle: { flex: 1, fontSize: 16, color: C.text },
+  done: { color: C.faint, textDecorationLine: "line-through" },
+  now: { flexDirection: "row", alignItems: "center", paddingVertical: 2, backgroundColor: C.card },
+  nowText: { width: 62, textAlign: "right", fontSize: 11, color: C.accent, fontWeight: "700", fontVariant: ["tabular-nums"] },
+  nowLine: { flex: 1, height: 2, backgroundColor: C.accent, marginLeft: 10 },
 });

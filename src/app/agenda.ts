@@ -39,12 +39,14 @@ export interface AgendaSnapshot {
   events: Record<string, CalEvent[]>;
   /** Changes at every refresh (for lists). */
   version: number;
+  /** Changes when the loaded events are thrown away (calendar changed): screens load their days again. */
+  eventsEpoch: number;
 }
 
 const toDate = (v: string | Date) => (v instanceof Date ? v : new Date(v));
 
 class Agenda {
-  private snap: AgendaSnapshot = { vaultName: null, tasks: [], loading: false, error: null, calendarAccess: "unknown", calendars: [], events: {}, version: 0 };
+  private snap: AgendaSnapshot = { vaultName: null, tasks: [], loading: false, error: null, calendarAccess: "unknown", calendars: [], events: {}, version: 0, eventsEpoch: 0 };
   private listeners = new Set<() => void>();
   private files = new Map<string, { mtime: number; text: string }>();
   private daily: DailyConfig = { folder: "Daily", format: "YYYY-MM-DD" };
@@ -74,8 +76,7 @@ class Agenda {
     AppState.addEventListener("change", (s) => {
       if (s === "active") {
         void this.refresh();
-        this.loadedRanges = [];
-        this.set({ events: {} });
+        this.dropEvents();
       }
     });
   }
@@ -341,11 +342,15 @@ class Agenda {
     const a = new Date(from.getFullYear(), from.getMonth(), from.getDate()).getTime();
     const b = new Date(to.getFullYear(), to.getMonth(), to.getDate() + 1).getTime();
     if (this.loadedRanges.some(([x, y]) => x <= a && y >= b)) return;
+    const epoch = this.snap.eventsEpoch;
     try {
       const list = await Cal.listEvents(this.snap.calendars.map((c) => c.id), new Date(a), new Date(b));
+      // thrown away while loading (an event changed): the screen asks again with the new epoch
+      if (epoch !== this.snap.eventsEpoch) return;
       const colors = new Map(this.snap.calendars.map((c) => [c.id, c.color]));
       const events = { ...this.snap.events };
-      for (let d = a; d < b; d += 86400000) events[ymd(new Date(d))] = [];
+      // day by day with the calendar (not +24 h: the day the clocks change has 23 or 25 hours)
+      for (const d = new Date(a); d.getTime() < b; d.setDate(d.getDate() + 1)) events[ymd(d)] = [];
       for (const e of list) {
         const ev: CalEvent = {
           id: e.id,
@@ -383,7 +388,7 @@ class Agenda {
 
   private dropEvents(): void {
     this.loadedRanges = [];
-    this.set({ events: {} });
+    this.set({ events: {}, eventsEpoch: this.snap.eventsEpoch + 1 });
   }
 
   async addEvent(q: QuickAdd, calendarId: string | null): Promise<boolean> {

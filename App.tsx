@@ -6,28 +6,26 @@ import { agenda, CalEvent } from "./src/app/agenda";
 import { VaultTask } from "./src/core/tasks";
 import { CalendarScreen } from "./src/ui/agenda/calendar";
 import { C, useAgenda } from "./src/ui/agenda/common";
-import { ListFilter, ProjectsScreen, TaskListScreen } from "./src/ui/agenda/projects";
 import { EventSheet, QuickAddSheet, TaskEditor } from "./src/ui/agenda/sheets";
-import { TodayScreen } from "./src/ui/agenda/today";
+import { TasksScreen } from "./src/ui/agenda/tasks";
 import { HomeScreen, LogScreen, SettingsScreen } from "./src/ui/screens";
 
-type Tab = "today" | "calendar" | "projects" | "pen";
+type Tab = "tasks" | "calendar" | "pen";
 type PenScreen = "home" | "settings" | "log";
 const PEN_TITLES: Record<PenScreen, string> = { home: "", settings: "Impostazioni", log: "Registro" };
 
 const TABS: { id: Tab; icon: string; label: string }[] = [
-  { id: "today", icon: "☀︎", label: "Oggi" },
+  { id: "tasks", icon: "☑︎", label: "Attività" },
   { id: "calendar", icon: "▦", label: "Calendario" },
-  { id: "projects", icon: "☰", label: "Progetti" },
   { id: "pen", icon: "✎", label: "Penna" },
 ];
 
 /** Calendar and task manager (Fantastical + Todoist) on the Obsidian vault, plus the pen. */
 export default function App() {
   const a = useAgenda();
-  const [tab, setTab] = useState<Tab>("today");
+  const [tab, setTab] = useState<Tab>("tasks");
   const [pen, setPen] = useState<PenScreen>("home");
-  const [list, setList] = useState<ListFilter | null>(null);
+  const [project, setProject] = useState<string | null>(null);
   const [task, setTask] = useState<VaultTask | null>(null);
   const [event, setEvent] = useState<CalEvent | null>(null);
   const [adding, setAdding] = useState(false);
@@ -44,8 +42,10 @@ export default function App() {
     return () => sub.remove();
   }, []);
 
-  const contextProject = tab === "projects" && list?.kind === "project" ? list.name : null;
-  const contextDay = tab === "today" || tab === "calendar" ? day : null;
+  const contextProject = tab === "tasks" ? project : null;
+  const contextDay = tab === "calendar" ? day : null;
+  // the + button: on the tasks and on a day of the calendar (the month has its own «+ Nuovo»)
+  const showFab = (tab === "tasks" && !!a.vaultName) || (tab === "calendar" && !!day);
 
   return (
     <SafeAreaProvider>
@@ -56,7 +56,7 @@ export default function App() {
             <Text style={styles.errorText}>{a.error}</Text>
           </Pressable>
         ) : null}
-        {!a.vaultName && tab !== "pen" ? (
+        {!a.vaultName && tab === "tasks" ? (
           <View style={styles.setup}>
             <Text style={styles.setupTitle}>Collega il vault di Obsidian</Text>
             <Text style={styles.setupText}>
@@ -69,9 +69,8 @@ export default function App() {
         ) : null}
 
         <View style={{ flex: 1 }}>
-          {tab === "today" && a.vaultName ? <TodayScreen onTask={setTask} onEvent={setEvent} onDayChange={setDay} /> : null}
-          {tab === "calendar" ? <CalendarScreen onTask={setTask} onEvent={setEvent} onDayChange={setDay} /> : null}
-          {tab === "projects" && a.vaultName ? list ? <TaskListScreen filter={list} onBack={() => setList(null)} onTask={setTask} /> : <ProjectsScreen onOpen={setList} /> : null}
+          {tab === "tasks" && a.vaultName ? <TasksScreen onTask={setTask} onProject={setProject} /> : null}
+          {tab === "calendar" ? <CalendarScreen onTask={setTask} onEvent={setEvent} onDayChange={setDay} onAdd={() => setAdding(true)} /> : null}
           {tab === "pen" ? (
             <View style={{ flex: 1 }}>
               {pen !== "home" ? (
@@ -88,7 +87,7 @@ export default function App() {
           ) : null}
         </View>
 
-        {tab !== "pen" && a.vaultName ? (
+        {showFab ? (
           <Pressable onPress={() => setAdding(true)} style={styles.fab}>
             <Text style={styles.fabText}>+</Text>
           </Pressable>
@@ -96,7 +95,7 @@ export default function App() {
 
         <SafeAreaView edges={["bottom"]} style={styles.tabs}>
           {TABS.map((t) => (
-            <Pressable key={t.id} onPress={() => (t.id === tab && t.id === "projects" ? setList(null) : setTab(t.id))} style={styles.tab}>
+            <Pressable key={t.id} onPress={() => setTab(t.id)} style={styles.tab}>
               <Text style={[styles.tabIcon, tab === t.id && { color: C.accent }]}>{t.icon}</Text>
               <Text style={[styles.tabLabel, tab === t.id && { color: C.accent }]}>{t.label}</Text>
             </Pressable>

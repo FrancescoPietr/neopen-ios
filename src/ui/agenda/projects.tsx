@@ -50,7 +50,7 @@ function Item({ icon, label, count, color, onPress }: { icon: string; label: str
   );
 }
 
-export function ProjectsScreen({ onOpen }: { onOpen: (f: ListFilter) => void }) {
+export function ProjectsScreen({ onOpen, showTitle = true }: { onOpen: (f: ListFilter) => void; showTitle?: boolean }) {
   const a = useAgenda();
   const ps = projects(a.tasks);
   const own = ps.filter((p) => p.own);
@@ -59,7 +59,7 @@ export function ProjectsScreen({ onOpen }: { onOpen: (f: ListFilter) => void }) 
   const open = a.tasks.filter((t) => !t.done);
   return (
     <ScrollView refreshControl={<RefreshControl refreshing={a.loading} onRefresh={() => void agenda.refresh()} />} contentContainerStyle={{ paddingBottom: 120 }}>
-      <Text style={st.title}>Progetti</Text>
+      {showTitle ? <Text style={st.title}>Progetti</Text> : null}
       <View style={st.card}>
         {(own.length ? own : [{ name: "Inbox", file: "Attività/Inbox.md", open: 0, own: true }]).map((p) => (
           <Item key={p.file} icon={p.name === "Inbox" ? "📥" : "#"} color={p.name === "Inbox" ? undefined : C.accent} label={p.name} count={p.open} onPress={() => onOpen({ kind: "project", file: p.file, name: p.name })} />
@@ -93,7 +93,7 @@ export function ProjectsScreen({ onOpen }: { onOpen: (f: ListFilter) => void }) 
           ))}
         </View>
       ) : null}
-      <Text style={st.hint}>Le attività delle note del giorno sono in «Oggi» e nel calendario.</Text>
+      <Text style={st.hint}>Le attività delle note del giorno sono in «In programma» e nel calendario.</Text>
     </ScrollView>
   );
 }
