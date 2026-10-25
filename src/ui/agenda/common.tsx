@@ -1,22 +1,46 @@
 // Building blocks of the calendar and task screens (Fantastical + Todoist style), UI in Italian.
 import { useSyncExternalStore } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
+import { Text } from "../theme/ui";
+import { T, themed } from "../theme/theme";
+import { HandBar, HandCheck, HandFrame, HandLine, RowLine } from "../theme/ui";
 import { agenda, AgendaSnapshot, CalEvent } from "../../app/agenda";
 import { Priority, VaultTask, addDays, parseYmd, ymd } from "../../core/tasks";
 
 export const useAgenda = (): AgendaSnapshot => useSyncExternalStore(agenda.subscribe, agenda.getSnapshot);
 
+/** Colors of the current look (read while drawing: they follow the "Aspetto" settings). */
 export const C = {
-  bg: "#F2F2F7",
-  card: "#FFFFFF",
-  text: "#1C1C1E",
-  sub: "#6C6C70",
-  faint: "#AEAEB2",
-  line: "#E5E5EA",
-  blue: "#0A63D6",
-  red: "#D12F2F",
-  green: "#1E9E4A",
-  accent: "#E5484D",
+  get bg() {
+    return T.paper;
+  },
+  get card() {
+    return T.card;
+  },
+  get text() {
+    return T.ink;
+  },
+  get sub() {
+    return T.inkSoft;
+  },
+  get faint() {
+    return T.faint;
+  },
+  get line() {
+    return T.line;
+  },
+  get blue() {
+    return T.accent;
+  },
+  get red() {
+    return T.red;
+  },
+  get green() {
+    return T.green;
+  },
+  get accent() {
+    return T.accent;
+  },
 };
 
 export const PRIORITY_COLOR: Record<Priority, string> = { 1: "#D1453B", 2: "#EB8909", 3: "#246FE0", 4: "#8E8E93" };
@@ -47,12 +71,7 @@ export const hm = (d: Date) => `${String(d.getHours()).padStart(2, "0")}:${Strin
 // ---------------------------------------------------------------- rows
 
 export function Check({ done, priority, onPress }: { done: boolean; priority: Priority; onPress: () => void }) {
-  const color = PRIORITY_COLOR[priority];
-  return (
-    <Pressable onPress={onPress} hitSlop={10} style={[s.check, { borderColor: color, backgroundColor: done ? color : priority < 4 ? color + "1A" : "transparent" }]}>
-      {done ? <Text style={s.checkMark}>✓</Text> : null}
-    </Pressable>
-  );
+  return <HandCheck done={done} color={priority < 4 ? PRIORITY_COLOR[priority] : T.inkSoft} onPress={onPress} />;
 }
 
 export function TaskRow({ task, onPress, showDate, showProject = true }: { task: VaultTask; onPress: () => void; showDate?: boolean; showProject?: boolean }) {
@@ -78,6 +97,7 @@ export function TaskRow({ task, onPress, showDate, showProject = true }: { task:
           {showProject ? <Text style={s.project}>{task.project}</Text> : null}
         </View>
       </View>
+      <RowLine left={task.parent ? 44 : 16} />
     </Pressable>
   );
 }
@@ -85,7 +105,7 @@ export function TaskRow({ task, onPress, showDate, showProject = true }: { task:
 export function EventRow({ ev, onPress }: { ev: CalEvent; onPress: () => void }) {
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [s.eventRow, pressed && { backgroundColor: C.line }]}>
-      <View style={[s.eventBar, { backgroundColor: ev.color }]} />
+      <HandBar color={ev.color} style={{ marginLeft: 12 }} />
       <View style={s.eventTime}>
         {ev.allDay ? (
           <Text style={s.eventTimeText}>tutto il giorno</Text>
@@ -102,6 +122,7 @@ export function EventRow({ ev, onPress }: { ev: CalEvent; onPress: () => void })
         </Text>
         {ev.location ? <Text style={s.meta}>{ev.location}</Text> : null}
       </View>
+      <RowLine />
     </Pressable>
   );
 }
@@ -115,22 +136,27 @@ export function SectionHeader({ title, right, color }: { title: string; right?: 
   );
 }
 
+/** Choices side by side; the chosen one is underlined with the pen. */
 export function Segmented<T extends string>({ value, options, onChange }: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void }) {
   return (
     <View style={s.segmented}>
       {options.map((o) => (
-        <Pressable key={o.value} onPress={() => onChange(o.value)} style={[s.segment, value === o.value && s.segmentOn]}>
+        <Pressable key={o.value} onPress={() => onChange(o.value)} style={s.segment}>
           <Text style={[s.segmentText, value === o.value && s.segmentTextOn]}>{o.label}</Text>
+          {value === o.value ? <HandLine color={C.accent} weight={2} seed={`seg${o.value}`} style={{ alignSelf: "stretch", marginHorizontal: 10 }} /> : <View style={{ height: 6 }} />}
         </Pressable>
       ))}
     </View>
   );
 }
 
-export function Chip({ label, on, onPress, color = C.blue }: { label: string; on?: boolean; onPress: () => void; color?: string }) {
+export function Chip({ label, on, onPress, color }: { label: string; on?: boolean; onPress: () => void; color?: string }) {
+  const c = color ?? C.accent;
   return (
-    <Pressable onPress={onPress} style={[s.chip, on ? { backgroundColor: color, borderColor: color } : null]}>
-      <Text style={[s.chipText, on ? { color: "#fff" } : { color }]}>{label}</Text>
+    <Pressable onPress={onPress}>
+      <HandFrame style={s.chip} color={on ? c : C.line} weight={on ? 1.6 : 1} fill={on ? c + "26" : undefined} seed={`chip${label}`}>
+        <Text style={[s.chipText, { color: on ? C.text : c }]}>{label}</Text>
+      </HandFrame>
     </Pressable>
   );
 }
@@ -139,29 +165,25 @@ export function Empty({ text }: { text: string }) {
   return <Text style={s.empty}>{text}</Text>;
 }
 
-export const s = StyleSheet.create({
-  check: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, alignItems: "center", justifyContent: "center", marginTop: 1 },
-  checkMark: { color: "#fff", fontSize: 13, fontWeight: "700" },
-  taskRow: { flexDirection: "row", gap: 12, paddingVertical: 10, paddingHorizontal: 16, backgroundColor: C.card, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.line },
-  taskTitle: { fontSize: 16, color: C.text },
+export const s = themed(() => StyleSheet.create({
+  taskRow: { flexDirection: "row", gap: 12, paddingVertical: 11, paddingHorizontal: 16 },
+  taskTitle: { fontSize: 17, color: C.text },
   doneText: { color: C.faint, textDecorationLine: "line-through" },
   metaRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 3, alignItems: "center" },
   meta: { fontSize: 13, color: C.sub },
-  label: { fontSize: 13, color: "#8E44AD" },
+  label: { fontSize: 13, color: C.accent },
   project: { fontSize: 13, color: C.faint, marginLeft: "auto" },
-  eventRow: { flexDirection: "row", gap: 10, paddingVertical: 10, paddingRight: 16, backgroundColor: C.card, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.line },
-  eventBar: { width: 4, borderRadius: 2, marginLeft: 12 },
+  eventRow: { flexDirection: "row", gap: 10, paddingVertical: 11, paddingRight: 16 },
   eventTime: { width: 58 },
   eventTimeText: { fontSize: 13, color: C.text, fontVariant: ["tabular-nums"] },
-  sectionHeader: { flexDirection: "row", alignItems: "baseline", paddingHorizontal: 16, paddingTop: 18, paddingBottom: 6, backgroundColor: C.bg },
-  sectionTitle: { fontSize: 15, fontWeight: "700", color: C.text },
+  sectionHeader: { flexDirection: "row", alignItems: "baseline", paddingHorizontal: 16, paddingTop: 20, paddingBottom: 4 },
+  sectionTitle: { fontSize: 18, fontWeight: "700", color: C.text },
   sectionRight: { fontSize: 13, color: C.sub, marginLeft: "auto" },
-  segmented: { flexDirection: "row", backgroundColor: "#E3E3E8", borderRadius: 9, padding: 2, marginHorizontal: 16, marginVertical: 8 },
-  segment: { flex: 1, paddingVertical: 6, borderRadius: 7, alignItems: "center" },
-  segmentOn: { backgroundColor: "#fff", shadowColor: "#000", shadowOpacity: 0.08, shadowRadius: 2, shadowOffset: { width: 0, height: 1 } },
-  segmentText: { fontSize: 13, color: C.sub, fontWeight: "500" },
-  segmentTextOn: { color: C.text, fontWeight: "600" },
-  chip: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14, borderWidth: 1, borderColor: C.line, backgroundColor: C.card },
+  segmented: { flexDirection: "row", marginHorizontal: 16, marginVertical: 6 },
+  segment: { flex: 1, paddingTop: 6, alignItems: "center" },
+  segmentText: { fontSize: 16, color: C.sub },
+  segmentTextOn: { color: C.text, fontWeight: "700" },
+  chip: { paddingHorizontal: 12, paddingVertical: 6 },
   chipText: { fontSize: 13, fontWeight: "500" },
   empty: { textAlign: "center", color: C.faint, paddingVertical: 24, fontSize: 15 },
-});
+}));

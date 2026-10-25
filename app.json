@@ -25,6 +25,14 @@
           "calendarPermission": "NeoTransfer mostra e crea gli eventi dei tuoi calendari (Google, iCloud…) insieme alle attività del vault.",
           "remindersPermission": false
         }
+      ],
+      [
+        "expo-font",
+        {
+          "fonts": [
+            "./assets/fonts/Fra.ttf"
+          ]
+        }
       ]
     ]
   }

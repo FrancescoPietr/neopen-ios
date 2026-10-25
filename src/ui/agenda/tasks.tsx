@@ -1,7 +1,9 @@
 // "Attività" (Todoist): only tasks. «In programma»: late, today, the next days, later, without a date.
 // «Progetti»: Inbox, projects, filters, labels, notes with tasks.
 import { useEffect, useState } from "react";
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
+import { Glyph, Text } from "../theme/ui";
+import { themed } from "../theme/theme";
 import { agenda } from "../../app/agenda";
 import { byDateTime, overdue } from "../../core/taskStore";
 import { VaultTask, addDays, parseYmd } from "../../core/tasks";
@@ -56,8 +58,11 @@ function Planned({ onTask }: { onTask: (t: VaultTask) => void }) {
       ))}
 
       {undated.length ? (
-        <Pressable onPress={() => setShowUndated(!showUndated)}>
-          <SectionHeader title={`Senza data ${showUndated ? "▾" : "▸"}`} right={String(undated.length)} />
+        <Pressable onPress={() => setShowUndated(!showUndated)} style={{ flexDirection: "row", alignItems: "flex-end" }}>
+          <View style={{ flex: 1 }}>
+            <SectionHeader title="Senza data" right={String(undated.length)} />
+          </View>
+          <Glyph name={showUndated ? "nav.down" : "nav.next"} size={14} color={C.sub} style={{ marginRight: 16, marginBottom: 8 }} />
         </Pressable>
       ) : null}
       {showUndated
@@ -105,7 +110,7 @@ export function TasksScreen({ onTask, onProject }: { onTask: (t: VaultTask) => v
   );
 }
 
-const st = StyleSheet.create({
-  title: { fontSize: 32, fontWeight: "700", color: C.text, paddingHorizontal: 16, paddingTop: 8 },
-  free: { color: C.faint, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, backgroundColor: C.card },
-});
+const st = themed(() => StyleSheet.create({
+  title: { fontSize: 36, fontWeight: "700", color: C.text, paddingHorizontal: 16, paddingTop: 8 },
+  free: { color: C.faint, paddingHorizontal: 16, paddingVertical: 10, fontSize: 16 },
+}));

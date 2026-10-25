@@ -2,7 +2,9 @@
 // calendars, tasks of the vault). Tap a day → that day: all-day events, then the timeline (events and tasks with a
 // time, in order), then the tasks of the day. Swipe left/right to change month or day.
 import { useEffect, useRef, useState } from "react";
-import { GestureResponderEvent, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { GestureResponderEvent, Pressable, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
+import { Dot, Glyph, HandBar, HandFrame, HandLine, HandRing, NowMark, RowLine, Text } from "../theme/ui";
+import { themed } from "../theme/theme";
 import { agenda, CalEvent, visibleEvents } from "../../app/agenda";
 import { onDay } from "../../core/taskStore";
 import { VaultTask, addDays, parseYmd, ymd } from "../../core/tasks";
@@ -78,26 +80,32 @@ function MonthScreen({ month, onMonth, onOpen, onAdd }: { month: string; onMonth
     <View style={{ flex: 1 }}>
       <View style={st.nav}>
         <Pressable onPress={() => go(-1)} hitSlop={14}>
-          <Text style={st.arrow}>‹</Text>
+          <Glyph name="nav.prev" size={26} color={C.accent} weight={1.2} />
         </Pressable>
         <View style={{ flex: 1, alignItems: "center" }}>
           <Text style={st.monthTitle}>{cap(monthLong(m.getMonth()))}</Text>
           <Text style={st.year}>{m.getFullYear()}</Text>
         </View>
         <Pressable onPress={() => go(1)} hitSlop={14}>
-          <Text style={st.arrow}>›</Text>
+          <Glyph name="nav.next" size={26} color={C.accent} weight={1.2} />
         </Pressable>
       </View>
       <View style={st.tools}>
-        <Pressable onPress={() => onMonth(ymd(new Date(parseYmd(t).getFullYear(), parseYmd(t).getMonth(), 1)))} disabled={thisMonth} style={[st.pill, thisMonth && { opacity: 0.35 }]}>
-          <Text style={st.pillText}>Oggi</Text>
+        <Pressable onPress={() => onMonth(ymd(new Date(parseYmd(t).getFullYear(), parseYmd(t).getMonth(), 1)))} disabled={thisMonth} style={thisMonth && { opacity: 0.35 }}>
+          <HandFrame style={st.pill} color={C.accent} seed="oggi">
+            <Text style={st.pillText}>Oggi</Text>
+          </HandFrame>
         </Pressable>
-        <Pressable onPress={onAdd} style={[st.pill, st.pillAdd]}>
-          <Text style={[st.pillText, { color: "#fff" }]}>+ Nuovo</Text>
+        <Pressable onPress={onAdd}>
+          <HandFrame style={[st.pill, { flexDirection: "row", alignItems: "center", gap: 6 }]} color={C.accent} fill={C.accent + "2E"} weight={1.4} seed="nuovo">
+            <Glyph name="add" size={14} color={C.accent} weight={1.4} />
+            <Text style={st.pillText}>Nuovo</Text>
+          </HandFrame>
         </Pressable>
       </View>
       <CalendarAccess />
       <View style={st.weekHead}>
+        <HandLine style={{ position: "absolute", left: 4, right: 4, bottom: -3 }} seed="head" />
         {WEEK.map((w, i) => (
           <Text key={w} style={[st.weekHeadText, i >= 5 && { color: C.accent }]}>
             {w}
@@ -108,6 +116,7 @@ function MonthScreen({ month, onMonth, onOpen, onAdd }: { month: string; onMonth
         {height > 0
           ? Array.from({ length: rows }, (_, r) => (
               <View key={r} style={[st.weekRow, { height: (height - 4) / rows }]}>
+                <HandLine style={{ position: "absolute", left: 4, right: 4, bottom: -3 }} seed={`w${r}`} />
                 {days.slice(r * 7, r * 7 + 7).map((d) => {
                   const inMonth = parseYmd(d).getMonth() === m.getMonth();
                   const evs = visibleEvents(a, d);
@@ -116,10 +125,11 @@ function MonthScreen({ month, onMonth, onOpen, onAdd }: { month: string; onMonth
                   const isToday = d === t;
                   return (
                     <Pressable key={d} onPress={() => onOpen(d)} style={({ pressed }) => [st.cell, pressed && { backgroundColor: C.line }]}>
-                      <View style={[st.num, isToday && { backgroundColor: C.accent }]}>
-                        <Text style={[st.numText, !inMonth && { color: C.faint }, isToday && { color: "#fff", fontWeight: "700" }]}>{parseYmd(d).getDate()}</Text>
+                      <View style={st.num}>
+                        {isToday ? <HandRing size={40} /> : null}
+                        <Text style={[st.numText, !inMonth && { color: C.faint }, isToday && { color: C.accent, fontWeight: "700" }]}>{parseYmd(d).getDate()}</Text>
                       </View>
-                      {busy ? <View style={[st.dot, { backgroundColor: inMonth ? C.text : C.faint }]} /> : <View style={st.noDot} />}
+                      <View style={st.dotBox}>{busy ? <Dot size={7} color={inMonth ? C.text : C.faint} /> : null}</View>
                     </Pressable>
                   );
                 })}
@@ -177,11 +187,12 @@ function TimedRow({ item, onTask, onEvent }: { item: Timed; onTask: (t: VaultTas
         <Text style={st.timeFrom}>{item.from}</Text>
         {item.to ? <Text style={st.timeTo}>{item.to}</Text> : null}
       </View>
-      <View style={[st.bar, { backgroundColor: item.color }]} />
+      <HandBar color={item.color} />
       {item.task ? <Check done={item.task.done} priority={item.task.priority} onPress={() => void agenda.toggle(item.task!)} /> : null}
       <Text style={[st.timedTitle, done && st.done]} numberOfLines={3}>
         {item.title}
       </Text>
+      <RowLine />
     </Pressable>
   );
 }
@@ -205,15 +216,16 @@ function DayScreen({ day, onGo, onBack, onTask, onEvent }: { day: string; onGo: 
   return (
     <View style={{ flex: 1 }}>
       <View style={st.dayNav}>
-        <Pressable onPress={onBack} hitSlop={12}>
-          <Text style={st.back}>‹ {cap(monthLong(d.getMonth()))}</Text>
+        <Pressable onPress={onBack} hitSlop={12} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+          <Glyph name="nav.back" size={18} color={C.accent} weight={1.2} />
+          <Text style={st.back}>{cap(monthLong(d.getMonth()))}</Text>
         </Pressable>
         <View style={{ flexDirection: "row", gap: 22 }}>
           <Pressable onPress={() => onGo(addDays(day, -1))} hitSlop={12}>
-            <Text style={st.arrowSmall}>‹</Text>
+            <Glyph name="nav.prev" size={22} color={C.accent} weight={1.2} />
           </Pressable>
           <Pressable onPress={() => onGo(addDays(day, 1))} hitSlop={12}>
-            <Text style={st.arrowSmall}>›</Text>
+            <Glyph name="nav.next" size={22} color={C.accent} weight={1.2} />
           </Pressable>
         </View>
       </View>
@@ -235,10 +247,11 @@ function DayScreen({ day, onGo, onBack, onTask, onEvent }: { day: string; onGo: 
         {allDay.length ? <SectionHeader title="Tutto il giorno" /> : null}
         {allDay.map((e) => (
           <Pressable key={`${e.id}-${e.start.getTime()}`} onPress={() => onEvent(e)} style={({ pressed }) => [st.timed, pressed && { backgroundColor: C.line }]}>
-            <View style={[st.bar, { backgroundColor: e.color, marginLeft: 16 }]} />
+            <HandBar color={e.color} style={{ marginLeft: 16 }} />
             <Text style={[st.timedTitle, /^\s*✓/.test(e.title) && st.done]} numberOfLines={2}>
               {e.title}
             </Text>
+            <RowLine />
           </Pressable>
         ))}
 
@@ -266,7 +279,7 @@ function NowLine() {
   return (
     <View style={st.now}>
       <Text style={st.nowText}>{hm(new Date())}</Text>
-      <View style={st.nowLine} />
+      <NowMark />
     </View>
   );
 }
@@ -290,39 +303,33 @@ export function CalendarScreen({ onTask, onEvent, onDayChange, onAdd }: { onTask
   );
 }
 
-const st = StyleSheet.create({
+const st = themed(() => StyleSheet.create({
   nav: { flexDirection: "row", alignItems: "center", paddingHorizontal: 20, paddingTop: 6 },
-  arrow: { fontSize: 34, color: C.accent, lineHeight: 38, paddingHorizontal: 6 },
   monthTitle: { fontSize: 28, fontWeight: "700", color: C.text },
   year: { fontSize: 13, color: C.sub, marginTop: -2 },
   tools: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: 8, paddingBottom: 10 },
-  pill: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16, borderWidth: 1, borderColor: C.accent },
-  pillAdd: { backgroundColor: C.accent },
-  pillText: { color: C.accent, fontWeight: "600", fontSize: 14 },
+  pill: { paddingHorizontal: 14, paddingVertical: 6 },
+  pillText: { color: C.accent, fontWeight: "600", fontSize: 16 },
   banner: { marginHorizontal: 16, marginBottom: 8, padding: 12, borderRadius: 10, backgroundColor: "#FFF4E5" },
   bannerText: { color: "#8A4B00", fontSize: 14 },
-  weekHead: { flexDirection: "row", paddingHorizontal: 8, paddingBottom: 6, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.line },
-  weekHeadText: { flex: 1, textAlign: "center", fontSize: 12, color: C.sub, textTransform: "uppercase", fontWeight: "600" },
-  weekRow: { flexDirection: "row", paddingHorizontal: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.line },
+  weekHead: { flexDirection: "row", paddingHorizontal: 8, paddingBottom: 6 },
+  weekHeadText: { flex: 1, textAlign: "center", fontSize: 14, color: C.sub },
+  weekRow: { flexDirection: "row", paddingHorizontal: 8 },
   cell: { flex: 1, alignItems: "center", paddingTop: 8, borderRadius: 10 },
-  num: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center" },
-  numText: { fontSize: 18, color: C.text, fontVariant: ["tabular-nums"] },
-  dot: { width: 6, height: 6, borderRadius: 3, marginTop: 5 },
-  noDot: { height: 6, marginTop: 5 },
+  num: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
+  numText: { fontSize: 20, color: C.text, fontVariant: ["tabular-nums"] },
+  dotBox: { height: 9, marginTop: 1, alignItems: "center", justifyContent: "center" },
   dayNav: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: 8 },
   back: { fontSize: 17, color: C.accent },
-  arrowSmall: { fontSize: 28, color: C.accent, lineHeight: 30 },
   dayHead: { paddingHorizontal: 16, paddingTop: 6, paddingBottom: 6 },
   dayTitle: { fontSize: 32, fontWeight: "700", color: C.text },
   daySub: { fontSize: 15, color: C.sub, marginTop: 2 },
-  timed: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 11, paddingRight: 16, backgroundColor: C.card, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.line },
+  timed: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 11, paddingRight: 16 },
   time: { width: 62, alignItems: "flex-end" },
   timeFrom: { fontSize: 15, color: C.text, fontWeight: "600", fontVariant: ["tabular-nums"] },
   timeTo: { fontSize: 12, color: C.faint, fontVariant: ["tabular-nums"] },
-  bar: { width: 4, alignSelf: "stretch", borderRadius: 2 },
-  timedTitle: { flex: 1, fontSize: 16, color: C.text },
+  timedTitle: { flex: 1, fontSize: 17, color: C.text },
   done: { color: C.faint, textDecorationLine: "line-through" },
-  now: { flexDirection: "row", alignItems: "center", paddingVertical: 2, backgroundColor: C.card },
-  nowText: { width: 62, textAlign: "right", fontSize: 11, color: C.accent, fontWeight: "700", fontVariant: ["tabular-nums"] },
-  nowLine: { flex: 1, height: 2, backgroundColor: C.accent, marginLeft: 10 },
-});
+  now: { flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 2, paddingRight: 12 },
+  nowText: { width: 62, textAlign: "right", fontSize: 12, color: C.accent, fontWeight: "700" },
+}));

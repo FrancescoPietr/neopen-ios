@@ -2,23 +2,46 @@
 import * as Clipboard from "expo-clipboard";
 import * as Sharing from "expo-sharing";
 import { useState, useSyncExternalStore } from "react";
-import { ActivityIndicator, Alert, FlatList, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, FlatList, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { Glyph, HandFrame, HandSwitch, RowLine, Text, TextInput } from "./theme/ui";
+import { T, themed } from "./theme/theme";
 import { agenda } from "../app/agenda";
 import { model, Snapshot } from "../app/model";
 
 export const useModel = (): Snapshot => useSyncExternalStore(model.subscribe, model.getSnapshot);
 
+/** Colors of the current look. */
 const C = {
-  bg: "#F2F2F7",
-  card: "#FFFFFF",
-  text: "#1C1C1E",
-  sub: "#6C6C70",
-  line: "#E5E5EA",
-  blue: "#0A63D6",
-  green: "#1E9E4A",
-  orange: "#D9730D",
-  red: "#D12F2F",
-  gray: "#8E8E93",
+  get bg() {
+    return T.paper;
+  },
+  get card() {
+    return T.card;
+  },
+  get text() {
+    return T.ink;
+  },
+  get sub() {
+    return T.inkSoft;
+  },
+  get line() {
+    return T.line;
+  },
+  get blue() {
+    return T.accent;
+  },
+  get green() {
+    return T.green;
+  },
+  get orange() {
+    return T.orange;
+  },
+  get red() {
+    return T.red;
+  },
+  get gray() {
+    return T.faint;
+  },
 };
 
 // ---------------------------------------------------------------- building blocks
@@ -26,8 +49,8 @@ const C = {
 function Section({ title, footer, children }: { title?: string; footer?: string; children: React.ReactNode }) {
   return (
     <View style={s.section}>
-      {title ? <Text style={s.sectionTitle}>{title.toUpperCase()}</Text> : null}
-      <View style={s.card}>{children}</View>
+      {title ? <Text style={s.sectionTitle}>{title}</Text> : null}
+      <HandFrame style={s.card}>{children}</HandFrame>
       {footer ? <Text style={s.footer}>{footer}</Text> : null}
     </View>
   );
@@ -38,6 +61,7 @@ function Row({ label, value, color }: { label: string; value?: string; color?: s
     <View style={s.row}>
       <Text style={[s.rowLabel, color ? { color } : null]}>{label}</Text>
       {value !== undefined ? <Text style={s.rowValue}>{value}</Text> : null}
+      <RowLine />
     </View>
   );
 }
@@ -45,7 +69,19 @@ function Row({ label, value, color }: { label: string; value?: string; color?: s
 function Button({ label, onPress, disabled, color = C.blue, busy }: { label: string; onPress: () => void; disabled?: boolean; color?: string; busy?: boolean }) {
   return (
     <Pressable onPress={onPress} disabled={disabled || busy} style={({ pressed }) => [s.row, pressed && { backgroundColor: C.line }]}>
-      {busy ? <ActivityIndicator /> : <Text style={[s.button, { color: disabled ? C.gray : color }]}>{label}</Text>}
+      {busy ? <ActivityIndicator color={C.blue} /> : <Text style={[s.button, { color: disabled ? C.gray : color }]}>{label}</Text>}
+      <RowLine />
+    </Pressable>
+  );
+}
+
+function IconButton({ icon, label, onPress }: { icon: string; label: string; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => [s.row, { gap: 12 }, pressed && { backgroundColor: C.line }]}>
+      <Glyph name={icon} size={22} color={C.blue} />
+      <Text style={[s.button, { color: C.text, flex: 1 }]}>{label}</Text>
+      <Glyph name="nav.next" size={14} color={C.gray} />
+      <RowLine />
     </Pressable>
   );
 }
@@ -54,7 +90,8 @@ function Toggle({ label, value, onChange }: { label: string; value: boolean; onC
   return (
     <View style={s.row}>
       <Text style={[s.rowLabel, { flex: 1 }]}>{label}</Text>
-      <Switch value={value} onValueChange={onChange} />
+      <HandSwitch value={value} onChange={onChange} />
+      <RowLine />
     </View>
   );
 }
@@ -66,31 +103,31 @@ const time = (d: Date) => d.toLocaleTimeString("it-IT", { hour: "2-digit", minut
 function status(m: Snapshot): { title: string; detail: string; color: string; symbol: string } {
   switch (m.bleState) {
     case "bluetoothOff":
-      return { title: "Bluetooth spento", detail: "Accendilo dal Centro di Controllo.", color: C.red, symbol: "✕" };
+      return { title: "Bluetooth spento", detail: "Accendilo dal Centro di Controllo.", color: C.red, symbol: "error" };
     case "unauthorized":
-      return { title: "Bluetooth non permesso", detail: "Impostazioni → Neo Pen → Bluetooth.", color: C.red, symbol: "✋" };
+      return { title: "Bluetooth non permesso", detail: "Impostazioni → Neo Pen → Bluetooth.", color: C.red, symbol: "error" };
     case "starting":
-      return { title: "Avvio…", detail: "", color: C.gray, symbol: "…" };
+      return { title: "Avvio…", detail: "", color: C.gray, symbol: "wait" };
     case "noPen":
-      return { title: "Nessuna penna", detail: "Tocca «Collega la penna» con il tappo tolto.", color: C.orange, symbol: "?" };
+      return { title: "Nessuna penna", detail: "Tocca «Collega la penna» con il tappo tolto.", color: C.orange, symbol: "question" };
     case "searching":
-      return { title: "Cerco la penna…", detail: "Togli il tappo e tienila vicina.", color: C.blue, symbol: "⌕" };
+      return { title: "Cerco la penna…", detail: "Togli il tappo e tienila vicina.", color: C.blue, symbol: "search" };
     case "waiting":
-      return { title: "In attesa della penna", detail: "Togli il tappo: si collega da sola, anche con l'app chiusa.", color: C.gray, symbol: "✎" };
+      return { title: "In attesa della penna", detail: "Togli il tappo: si collega da sola, anche con l'app chiusa.", color: C.gray, symbol: "pen" };
     case "connecting":
-      return { title: "Mi collego…", detail: "", color: C.blue, symbol: "⇄" };
+      return { title: "Mi collego…", detail: "", color: C.blue, symbol: "link" };
     case "ready":
       switch (m.phase.kind) {
         case "handshake":
-          return { title: "Penna accesa", detail: "Mi presento alla penna…", color: C.blue, symbol: "✎" };
+          return { title: "Penna accesa", detail: "Mi presento alla penna…", color: C.blue, symbol: "pen" };
         case "syncing":
-          return { title: "Scarico la memoria", detail: `Pagina ${Math.min(m.phase.done + 1, m.phase.total)} di ${m.phase.total}`, color: C.blue, symbol: "↓" };
+          return { title: "Scarico la memoria", detail: `Pagina ${Math.min(m.phase.done + 1, m.phase.total)} di ${m.phase.total}`, color: C.blue, symbol: "download" };
         case "listening":
-          return { title: "Scrivi pure", detail: "Ogni tratto arriva subito sul telefono.", color: C.green, symbol: "✍" };
+          return { title: "Scrivi pure", detail: "Ogni tratto arriva subito sul telefono.", color: C.green, symbol: "write" };
         case "needsPassword":
-          return { title: "Serve la password", detail: "Scrivila nelle impostazioni.", color: C.orange, symbol: "🔒" };
+          return { title: "Serve la password", detail: "Scrivila nelle impostazioni.", color: C.orange, symbol: "lock" };
         default:
-          return { title: "Penna collegata", detail: "", color: C.green, symbol: "✓" };
+          return { title: "Penna collegata", detail: "", color: C.green, symbol: "ok" };
       }
   }
 }
@@ -98,9 +135,9 @@ function status(m: Snapshot): { title: string; detail: string; color: string; sy
 function StatusCard({ m }: { m: Snapshot }) {
   const st = status(m);
   return (
-    <View style={[s.status, { borderColor: st.color + "40" }]}>
-      <View style={[s.badge, { backgroundColor: st.color + "22" }]}>
-        <Text style={[s.badgeText, { color: st.color }]}>{st.symbol}</Text>
+    <HandFrame style={s.status} color={st.color} weight={1.3}>
+      <View style={s.badge}>
+        <Glyph name={st.symbol} size={40} color={st.color} />
       </View>
       <View style={{ flex: 1 }}>
         <Text style={s.statusTitle}>{st.title}</Text>
@@ -111,13 +148,13 @@ function StatusCard({ m }: { m: Snapshot }) {
           </View>
         ) : null}
       </View>
-    </View>
+    </HandFrame>
   );
 }
 
 // ---------------------------------------------------------------- home
 
-export function HomeScreen({ go }: { go: (screen: "settings" | "log") => void }) {
+export function HomeScreen({ go }: { go: (screen: "settings" | "log" | "look") => void }) {
   const m = useModel();
   return (
     <ScrollView style={s.screen} contentContainerStyle={s.content}>
@@ -158,8 +195,9 @@ export function HomeScreen({ go }: { go: (screen: "settings" | "log") => void })
       </Section>
 
       <Section>
-        <Button label="Impostazioni" onPress={() => go("settings")} />
-        <Button label="Registro" onPress={() => go("log")} />
+        <IconButton icon="palette" label="Aspetto" onPress={() => go("look")} />
+        <IconButton icon="settings" label="Impostazioni" onPress={() => go("settings")} />
+        <IconButton icon="log" label="Registro" onPress={() => go("log")} />
       </Section>
     </ScrollView>
   );
@@ -181,7 +219,8 @@ function PenCalendar({ value }: { value: string }) {
   const pick = (id: string) => (
     <Pressable key={id || "default"} onPress={() => model.update({ penCalendar: id })} style={({ pressed }) => [s.row, pressed && { backgroundColor: C.line }]}>
       <Text style={[s.rowLabel, { flex: 1 }]}>{id ? cals.find((c) => c.id === id)?.title ?? "?" : "Calendario predefinito dell'iPhone"}</Text>
-      {value === id ? <Text style={[s.button, { color: C.blue }]}>✓</Text> : null}
+      {value === id ? <Glyph name="check.done" size={18} color={C.blue} weight={1.2} /> : null}
+      <RowLine />
     </Pressable>
   );
   return (
@@ -366,6 +405,7 @@ export function LogScreen() {
           <View style={s.logLine}>
             <Text style={s.logTime}>{item.time.toLocaleTimeString("it-IT")}</Text>
             <Text style={s.logText}>{item.text}</Text>
+            <RowLine left={0} />
           </View>
         )}
       />
@@ -373,29 +413,28 @@ export function LogScreen() {
   );
 }
 
-const s = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: C.bg },
+const s = themed(() => StyleSheet.create({
+  screen: { flex: 1 },
   content: { padding: 16, paddingBottom: 40 },
-  largeTitle: { fontSize: 34, fontWeight: "700", color: C.text, marginBottom: 12 },
+  largeTitle: { fontSize: 38, fontWeight: "700", color: C.text, marginBottom: 12 },
   section: { marginBottom: 22 },
-  sectionTitle: { fontSize: 13, color: C.sub, marginLeft: 16, marginBottom: 6 },
-  footer: { fontSize: 13, color: C.sub, marginHorizontal: 16, marginTop: 6, lineHeight: 18 },
-  card: { backgroundColor: C.card, borderRadius: 12, overflow: "hidden" },
-  row: { minHeight: 46, paddingHorizontal: 16, paddingVertical: 10, flexDirection: "row", alignItems: "center", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.line },
-  rowLabel: { fontSize: 17, color: C.text },
-  rowValue: { fontSize: 17, color: C.sub, marginLeft: "auto" },
-  button: { fontSize: 17 },
-  input: { fontSize: 16, color: C.text, paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.line },
+  sectionTitle: { fontSize: 16, color: C.sub, marginLeft: 12, marginBottom: 4 },
+  footer: { fontSize: 14, color: C.sub, marginHorizontal: 12, marginTop: 6, lineHeight: 19 },
+  card: { paddingVertical: 3 },
+  row: { minHeight: 48, paddingHorizontal: 16, paddingVertical: 10, flexDirection: "row", alignItems: "center" },
+  rowLabel: { fontSize: 18, color: C.text },
+  rowValue: { fontSize: 18, color: C.sub, marginLeft: "auto" },
+  button: { fontSize: 18 },
+  input: { fontSize: 17, color: C.text, paddingHorizontal: 16, paddingVertical: 12 },
   mono: { fontFamily: "Menlo", fontSize: 13 },
   note: { fontSize: 13, color: C.sub, paddingHorizontal: 16, paddingVertical: 10 },
-  status: { flexDirection: "row", alignItems: "center", backgroundColor: C.card, borderRadius: 16, borderWidth: 1, padding: 16, marginBottom: 22, gap: 14 },
-  badge: { width: 52, height: 52, borderRadius: 26, alignItems: "center", justifyContent: "center" },
-  badgeText: { fontSize: 24, fontWeight: "600" },
-  statusTitle: { fontSize: 17, fontWeight: "600", color: C.text },
-  statusDetail: { fontSize: 15, color: C.sub, marginTop: 2 },
+  status: { flexDirection: "row", alignItems: "center", padding: 16, marginBottom: 22, gap: 14 },
+  badge: { width: 52, height: 52, alignItems: "center", justifyContent: "center" },
+  statusTitle: { fontSize: 20, fontWeight: "700", color: C.text },
+  statusDetail: { fontSize: 16, color: C.sub, marginTop: 2 },
   progress: { height: 4, backgroundColor: C.line, borderRadius: 2, marginTop: 8, overflow: "hidden" },
   progressFill: { height: 4, backgroundColor: C.blue },
-  logLine: { paddingVertical: 6, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.line },
+  logLine: { paddingVertical: 6 },
   logTime: { fontSize: 11, color: C.sub },
   logText: { fontSize: 14, color: C.text },
-});
+}));

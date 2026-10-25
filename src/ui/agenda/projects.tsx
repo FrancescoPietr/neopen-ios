@@ -1,6 +1,8 @@
 // "Progetti" (Todoist): Inbox, projects, notes with tasks, labels and priorities; each opens its task list.
 import { useState } from "react";
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
+import { Glyph, HandFrame, RowLine, Text } from "../theme/ui";
+import { themed } from "../theme/theme";
 import { agenda } from "../../app/agenda";
 import { byDateTime, labels, projects } from "../../core/taskStore";
 import { Priority, VaultTask } from "../../core/tasks";
@@ -41,11 +43,12 @@ function applyFilter(tasks: VaultTask[], f: ListFilter): VaultTask[] {
 function Item({ icon, label, count, color, onPress }: { icon: string; label: string; count?: number; color?: string; onPress: () => void }) {
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [st.item, pressed && { backgroundColor: C.line }]}>
-      <Text style={[st.icon, color ? { color } : null]}>{icon}</Text>
+      <Glyph name={icon} size={20} color={color ?? C.sub} />
       <Text style={st.itemLabel} numberOfLines={1}>
         {label}
       </Text>
       {count ? <Text style={st.count}>{count}</Text> : null}
+      <RowLine left={48} />
     </Pressable>
   );
 }
@@ -60,38 +63,38 @@ export function ProjectsScreen({ onOpen, showTitle = true }: { onOpen: (f: ListF
   return (
     <ScrollView refreshControl={<RefreshControl refreshing={a.loading} onRefresh={() => void agenda.refresh()} />} contentContainerStyle={{ paddingBottom: 120 }}>
       {showTitle ? <Text style={st.title}>Progetti</Text> : null}
-      <View style={st.card}>
+      <HandFrame style={st.card}>
         {(own.length ? own : [{ name: "Inbox", file: "Attività/Inbox.md", open: 0, own: true }]).map((p) => (
-          <Item key={p.file} icon={p.name === "Inbox" ? "📥" : "#"} color={p.name === "Inbox" ? undefined : C.accent} label={p.name} count={p.open} onPress={() => onOpen({ kind: "project", file: p.file, name: p.name })} />
+          <Item key={p.file} icon={p.name === "Inbox" ? "inbox" : "project"} color={p.name === "Inbox" ? undefined : C.accent} label={p.name} count={p.open} onPress={() => onOpen({ kind: "project", file: p.file, name: p.name })} />
         ))}
-      </View>
+      </HandFrame>
       <Text style={st.hint}>Un progetto è una nota nella cartella «Attività» del vault. Per crearne uno, scrivi +Nome nell'aggiunta rapida.</Text>
 
       <SectionHeader title="Filtri" />
-      <View style={st.card}>
+      <HandFrame style={st.card}>
         {([1, 2, 3] as Priority[]).map((p) => (
-          <Item key={p} icon="⚑" color={PRIORITY_COLOR[p]} label={`Priorità ${p}`} count={open.filter((t) => t.priority === p).length} onPress={() => onOpen({ kind: "priority", p })} />
+          <Item key={p} icon="priority" color={PRIORITY_COLOR[p]} label={`Priorità ${p}`} count={open.filter((t) => t.priority === p).length} onPress={() => onOpen({ kind: "priority", p })} />
         ))}
-        <Item icon="∅" label="Senza data" count={open.filter((t) => !t.date).length} onPress={() => onOpen({ kind: "nodate" })} />
-        <Item icon="✓" color={C.green} label="Completate" onPress={() => onOpen({ kind: "done" })} />
-      </View>
+        <Item icon="nodate" label="Senza data" count={open.filter((t) => !t.date).length} onPress={() => onOpen({ kind: "nodate" })} />
+        <Item icon="completed" color={C.green} label="Completate" onPress={() => onOpen({ kind: "done" })} />
+      </HandFrame>
 
       {ls.length ? <SectionHeader title="Etichette" /> : null}
       {ls.length ? (
-        <View style={st.card}>
+        <HandFrame style={st.card}>
           {ls.map((l) => (
-            <Item key={l.name} icon="🏷" label={l.name} count={l.open} onPress={() => onOpen({ kind: "label", name: l.name })} />
+            <Item key={l.name} icon="label" label={l.name} count={l.open} onPress={() => onOpen({ kind: "label", name: l.name })} />
           ))}
-        </View>
+        </HandFrame>
       ) : null}
 
       {notes.length ? <SectionHeader title="Note con attività" /> : null}
       {notes.length ? (
-        <View style={st.card}>
+        <HandFrame style={st.card}>
           {notes.map((p) => (
-            <Item key={p.file} icon="📝" label={p.name} count={p.open} onPress={() => onOpen({ kind: "project", file: p.file, name: p.name })} />
+            <Item key={p.file} icon="note" label={p.name} count={p.open} onPress={() => onOpen({ kind: "project", file: p.file, name: p.name })} />
           ))}
-        </View>
+        </HandFrame>
       ) : null}
       <Text style={st.hint}>Le attività delle note del giorno sono in «In programma» e nel calendario.</Text>
     </ScrollView>
@@ -107,8 +110,9 @@ export function TaskListScreen({ filter, onBack, onTask }: { filter: ListFilter;
   return (
     <View style={{ flex: 1 }}>
       <View style={st.nav}>
-        <Pressable onPress={onBack} hitSlop={12}>
-          <Text style={st.back}>‹ Progetti</Text>
+        <Pressable onPress={onBack} hitSlop={12} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+          <Glyph name="nav.back" size={18} color={C.accent} weight={1.2} />
+          <Text style={st.back}>Progetti</Text>
         </Pressable>
       </View>
       <ScrollView refreshControl={<RefreshControl refreshing={a.loading} onRefresh={() => void agenda.refresh()} />} contentContainerStyle={{ paddingBottom: 120 }}>
@@ -124,14 +128,13 @@ export function TaskListScreen({ filter, onBack, onTask }: { filter: ListFilter;
   );
 }
 
-const st = StyleSheet.create({
-  title: { fontSize: 32, fontWeight: "700", color: C.text, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8 },
-  card: { backgroundColor: C.card, borderRadius: 12, marginHorizontal: 16, overflow: "hidden" },
-  item: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.line, gap: 12 },
-  icon: { width: 22, textAlign: "center", fontSize: 17, color: C.sub },
-  itemLabel: { flex: 1, fontSize: 17, color: C.text },
+const st = themed(() => StyleSheet.create({
+  title: { fontSize: 36, fontWeight: "700", color: C.text, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8 },
+  card: { marginHorizontal: 12, paddingVertical: 4 },
+  item: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 12, gap: 12 },
+  itemLabel: { flex: 1, fontSize: 18, color: C.text },
   count: { fontSize: 15, color: C.sub },
   hint: { fontSize: 13, color: C.sub, marginHorizontal: 32, marginTop: 6, lineHeight: 18 },
   nav: { paddingHorizontal: 16, paddingTop: 8 },
-  back: { fontSize: 17, color: C.blue },
-});
+  back: { fontSize: 18, color: C.accent },
+}));

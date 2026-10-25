@@ -1,6 +1,11 @@
 import { StatusBar } from "expo-status-bar";
-import { useEffect, useState } from "react";
-import { AppState, Pressable, StyleSheet, Text, View } from "react-native";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { AppState, Pressable, StyleSheet, View } from "react-native";
+import { Glyph, HandFrame, HandLine, Paper, Text } from "./src/ui/theme/ui";
+import { T, theme, themed } from "./src/ui/theme/theme";
+import { roughBlob } from "./src/ui/theme/rough";
+import Svg, { Path } from "react-native-svg";
+import { LookScreen } from "./src/ui/look";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { agenda, CalEvent } from "./src/app/agenda";
 import { VaultTask } from "./src/core/tasks";
@@ -11,17 +16,19 @@ import { TasksScreen } from "./src/ui/agenda/tasks";
 import { HomeScreen, LogScreen, SettingsScreen } from "./src/ui/screens";
 
 type Tab = "tasks" | "calendar" | "pen";
-type PenScreen = "home" | "settings" | "log";
-const PEN_TITLES: Record<PenScreen, string> = { home: "", settings: "Impostazioni", log: "Registro" };
+type PenScreen = "home" | "settings" | "log" | "look";
+const PEN_TITLES: Record<PenScreen, string> = { home: "", settings: "Impostazioni", log: "Registro", look: "" };
 
 const TABS: { id: Tab; icon: string; label: string }[] = [
-  { id: "tasks", icon: "☑︎", label: "Attività" },
-  { id: "calendar", icon: "▦", label: "Calendario" },
-  { id: "pen", icon: "✎", label: "Penna" },
+  { id: "tasks", icon: "tab.tasks", label: "Attività" },
+  { id: "calendar", icon: "tab.calendar", label: "Calendario" },
+  { id: "pen", icon: "tab.pen", label: "Penna" },
 ];
 
 /** Calendar and task manager (Fantastical + Todoist) on the Obsidian vault, plus the pen. */
 export default function App() {
+  // the look changed: everything is drawn again with the new colors and handwriting
+  useSyncExternalStore(theme.subscribe, () => theme.version);
   const a = useAgenda();
   const [tab, setTab] = useState<Tab>("tasks");
   const [pen, setPen] = useState<PenScreen>("home");
@@ -49,23 +56,26 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
+      <Paper>
       <SafeAreaView style={styles.root} edges={["top", "left", "right"]}>
-        <StatusBar style="dark" />
+        <StatusBar style={T.dark ? "light" : "dark"} />
         {a.error ? (
           <Pressable onPress={agenda.clearError} style={styles.error}>
             <Text style={styles.errorText}>{a.error}</Text>
           </Pressable>
         ) : null}
         {!a.vaultName && tab === "tasks" ? (
-          <View style={styles.setup}>
+          <HandFrame style={styles.setup} seed="setup">
             <Text style={styles.setupTitle}>Collega il vault di Obsidian</Text>
             <Text style={styles.setupText}>
               Le attività stanno nelle tue note: scegli la cartella del vault in File → Sul mio iPhone → Obsidian. Le nuove attività finiscono nella cartella «Attività» del vault.
             </Text>
-            <Pressable onPress={() => void agenda.pickVault()} style={styles.setupBtn}>
-              <Text style={styles.setupBtnText}>Scegli la cartella del vault</Text>
+            <Pressable onPress={() => void agenda.pickVault()}>
+              <HandFrame style={styles.setupBtn} color={C.accent} fill={C.accent + "26"} seed="setupbtn">
+                <Text style={styles.setupBtnText}>Scegli la cartella del vault</Text>
+              </HandFrame>
             </Pressable>
-          </View>
+          </HandFrame>
         ) : null}
 
         <View style={{ flex: 1 }}>
@@ -75,29 +85,34 @@ export default function App() {
             <View style={{ flex: 1 }}>
               {pen !== "home" ? (
                 <View style={styles.bar}>
-                  <Pressable onPress={() => setPen("home")} hitSlop={12}>
-                    <Text style={styles.back}>‹ Penna</Text>
+                  <Pressable onPress={() => setPen("home")} hitSlop={12} style={{ flexDirection: "row", alignItems: "center", gap: 4, width: 90 }}>
+                    <Glyph name="nav.back" size={18} color={C.accent} weight={1.2} />
+                    <Text style={styles.back}>Penna</Text>
                   </Pressable>
                   <Text style={styles.title}>{PEN_TITLES[pen]}</Text>
                   <View style={{ width: 80 }} />
                 </View>
               ) : null}
-              {pen === "home" ? <HomeScreen go={setPen} /> : pen === "settings" ? <SettingsScreen /> : <LogScreen />}
+              {pen === "home" ? <HomeScreen go={setPen} /> : pen === "settings" ? <SettingsScreen /> : pen === "look" ? <LookScreen /> : <LogScreen />}
             </View>
           ) : null}
         </View>
 
         {showFab ? (
           <Pressable onPress={() => setAdding(true)} style={styles.fab}>
-            <Text style={styles.fabText}>+</Text>
+            <Svg width={62} height={62} style={{ position: "absolute" }}>
+              <Path d={roughBlob(31, 31, 27, "fab", 0.07)} fill={C.accent} />
+            </Svg>
+            <Glyph name="add" size={24} color={T.onAccent} weight={1.4} />
           </Pressable>
         ) : null}
 
         <SafeAreaView edges={["bottom"]} style={styles.tabs}>
+          <HandLine style={{ position: "absolute", left: 6, right: 6, top: -3 }} seed="tabs" />
           {TABS.map((t) => (
             <Pressable key={t.id} onPress={() => setTab(t.id)} style={styles.tab}>
-              <Text style={[styles.tabIcon, tab === t.id && { color: C.accent }]}>{t.icon}</Text>
-              <Text style={[styles.tabLabel, tab === t.id && { color: C.accent }]}>{t.label}</Text>
+              <Glyph name={t.icon} size={26} color={tab === t.id ? C.accent : T.faint} weight={tab === t.id ? 1.2 : 1} />
+              <Text style={[styles.tabLabel, tab === t.id && { color: C.accent, fontWeight: "700" }]}>{t.label}</Text>
             </Pressable>
           ))}
         </SafeAreaView>
@@ -106,40 +121,27 @@ export default function App() {
         <TaskEditor task={task} onClose={() => setTask(null)} />
         <EventSheet ev={event} onClose={() => setEvent(null)} />
       </SafeAreaView>
+      </Paper>
     </SafeAreaProvider>
   );
 }
 
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: "#F2F2F7" },
-  bar: { height: 44, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 12 },
-  back: { fontSize: 17, color: "#0A63D6", width: 80 },
-  title: { fontSize: 17, fontWeight: "600", color: "#1C1C1E" },
-  tabs: { flexDirection: "row", borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "#D1D1D6", backgroundColor: "#F9F9F9" },
-  tab: { flex: 1, alignItems: "center", paddingTop: 6, paddingBottom: 4 },
-  tabIcon: { fontSize: 20, color: "#8E8E93" },
-  tabLabel: { fontSize: 10, color: "#8E8E93", marginTop: 1 },
-  fab: {
-    position: "absolute",
-    right: 20,
-    bottom: 96,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: C.accent,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
-  },
-  fabText: { color: "#fff", fontSize: 32, lineHeight: 34, fontWeight: "300" },
-  error: { backgroundColor: "#FDECEC", padding: 10, marginHorizontal: 12, borderRadius: 8, marginTop: 4 },
-  errorText: { color: "#A12020", fontSize: 13 },
-  setup: { margin: 16, padding: 16, backgroundColor: "#fff", borderRadius: 12, gap: 10 },
-  setupTitle: { fontSize: 20, fontWeight: "700", color: "#1C1C1E" },
-  setupText: { fontSize: 15, color: "#6C6C70", lineHeight: 21 },
-  setupBtn: { backgroundColor: C.accent, borderRadius: 10, paddingVertical: 12, alignItems: "center" },
-  setupBtnText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-});
+const styles = themed(() =>
+  StyleSheet.create({
+    root: { flex: 1 },
+    bar: { height: 44, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 12 },
+    back: { fontSize: 18, color: T.accent },
+    title: { fontSize: 19, fontWeight: "700", color: T.ink },
+    tabs: { flexDirection: "row", backgroundColor: T.paper },
+    tab: { flex: 1, alignItems: "center", paddingTop: 8, paddingBottom: 2, gap: 1 },
+    tabLabel: { fontSize: 12, color: T.faint },
+    fab: { position: "absolute", right: 18, bottom: 100, width: 62, height: 62, alignItems: "center", justifyContent: "center" },
+    error: { backgroundColor: T.red + "22", padding: 10, marginHorizontal: 12, borderRadius: 8, marginTop: 4 },
+    errorText: { color: T.red, fontSize: 14 },
+    setup: { margin: 16, padding: 16, gap: 10 },
+    setupTitle: { fontSize: 22, fontWeight: "700", color: T.ink },
+    setupText: { fontSize: 16, color: T.inkSoft, lineHeight: 22 },
+    setupBtn: { paddingVertical: 12, alignItems: "center" },
+    setupBtnText: { color: T.accent, fontSize: 18, fontWeight: "700" },
+  })
+);
