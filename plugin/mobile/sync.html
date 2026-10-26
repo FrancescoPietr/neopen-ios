@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Neo Pen · iPhone</title>
+<style>
+  :root { --bg:#f6f3ee; --fg:#1f1c19; --muted:#6b645c; --accent:#b4572e; --card:#fffdf9; --line:#e2dbd1; --ok:#2e7d4f; --warn:#b4572e; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#1d1a17; --fg:#f2ede6; --muted:#a59d93; --accent:#e08a5f; --card:#272320; --line:#3a352f; --ok:#6fcf97; --warn:#e08a5f; } }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:20px 16px 40px; font:16px/1.45 -apple-system, system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+  h1 { font-size:22px; margin:0 0 14px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:12px; }
+  .state { text-align:center; padding:22px 14px; border-left:5px solid var(--line); }
+  .state.ok { border-left-color:var(--ok); } .state.warn { border-left-color:var(--warn); } .state.work { border-left-color:var(--accent); }
+  #stateMain { font-size:20px; font-weight:650; } #stateSub { color:var(--muted); font-size:14px; margin-top:4px; }
+  button, input { font:inherit; border-radius:10px; border:1px solid var(--line); padding:12px 14px; width:100%; margin-top:8px; background:var(--card); color:var(--fg); }
+  button.main { background:var(--accent); color:#fff; border-color:var(--accent); font-weight:600; }
+  button:disabled { opacity:.5; }
+  .hide { display:none; }
+  label { display:block; font-size:13px; color:var(--muted); margin-top:10px; }
+  details summary { cursor:pointer; font-weight:600; }
+  pre { white-space:pre-wrap; font:12px/1.4 ui-monospace, Menlo, monospace; margin:8px 0 0; max-height:40vh; overflow:auto; }
+  .row { display:flex; gap:8px; } .row button { margin-top:8px; }
+</style>
+</head>
+<body>
+  <h1>Neo Pen · iPhone</h1>
+  <div class="card state idle" id="state"><div id="stateMain">Avvio…</div><div id="stateSub"></div></div>
+  <button id="choose" class="main hide">Scegli la penna</button>
+  <button id="go" class="main">Sincronizza ora</button>
+  <div class="card" style="margin-top:12px">
+    <details>
+      <summary>Impostazioni</summary>
+      <label for="url">Indirizzo dello script</label>
+      <input id="url" type="url" autocapitalize="off" autocorrect="off" placeholder="https://script.google.com/macros/s/…/exec">
+      <label for="secret">Chiave segreta</label>
+      <input id="secret" type="text" autocapitalize="off" autocorrect="off">
+      <div class="row"><button id="save">Salva e sincronizza</button><button id="test">Prova lo script</button></div>
+      <button id="forget">Rimanda tutte le pagine</button>
+    </details>
+  </div>
+  <div class="card">
+    <details>
+      <summary>Registro</summary>
+      <div class="row"><button id="copy">Copia</button><button id="clear">Cancella</button></div>
+      <pre id="log"></pre>
+    </details>
+  </div>
+  <script src="sync.js"></script>
+</body>
+</html>

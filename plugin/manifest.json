@@ -1,0 +1,9 @@
+{
+  "id": "neo-pen",
+  "name": "Neo Pen",
+  "version": "0.23.0",
+  "minAppVersion": "1.5.0",
+  "description": "Collega la Neo Smartpen al vault: tratti in tempo reale, pagine offline, disegni SVG e una nota per pagina.",
+  "author": "Francesco",
+  "isDesktopOnly": false
+}

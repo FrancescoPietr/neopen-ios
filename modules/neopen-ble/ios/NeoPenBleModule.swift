@@ -83,6 +83,35 @@ public class NeoPenBleModule: Module {
       VaultFolder.shared.write(path, text)
     }
 
+    // the whole vault, for the plugin's engine running on the phone (all synchronous: local files)
+    Function("vaultScan") { () -> [[String: Any]] in
+      VaultFolder.shared.scan()
+    }
+    Function("vaultStat") { (path: String) -> [String: Any]? in
+      VaultFolder.shared.stat(path)
+    }
+    Function("vaultList") { (path: String) -> [String: [String]] in
+      VaultFolder.shared.list(path)
+    }
+    Function("vaultReadText") { (path: String) -> String? in
+      VaultFolder.shared.read(path)
+    }
+    Function("vaultReadBase64") { (path: String) -> String? in
+      VaultFolder.shared.readData(path)?.base64EncodedString()
+    }
+    Function("vaultWriteBase64") { (path: String, base64: String) -> String in
+      guard let data = Data(base64Encoded: base64) else { return "dati non validi" }
+      return VaultFolder.shared.writeData(path, data)
+    }
+    Function("vaultMkdir") { (path: String) -> String in
+      VaultFolder.shared.mkdir(path)
+    }
+    Function("vaultRemove") { (path: String) -> String in
+      VaultFolder.shared.remove(path)
+    }
+    Function("vaultRename") { (from: String, to: String) -> String in
+      VaultFolder.shared.rename(from, to)
+    }
     Function("startBackgroundPost") { (id: String, url: String, headers: [String: String], bodyPath: String) -> Bool in
       BackgroundHttp.shared.startPost(id: id, url: url, headers: headers, bodyPath: bodyPath)
     }

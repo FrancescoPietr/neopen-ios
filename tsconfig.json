@@ -3,5 +3,5 @@
   "compilerOptions": {
     "strict": true
   },
-  "exclude": ["node_modules", "test", "tools", "legacy-swift"]
+  "exclude": ["node_modules", "test", "tools", "legacy-swift", "plugin"]
 }

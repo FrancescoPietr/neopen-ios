@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.test.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": { "obsidian": ["./plugin/src/phone/obsidian.ts"] }
+  }
+}

@@ -25,6 +25,11 @@ jobs:
         run: npm ci
       - name: Typecheck
         run: npm run typecheck
+      - name: Obsidian plugin (types and build, same code the app runs)
+        run: |
+          cd plugin
+          npm ci
+          npm run build
       - name: Tests (TypeScript core)
         run: |
           set -o pipefail

@@ -86,6 +86,16 @@ export class PhoneEvents {
     writeJson(FILE, this.state);
   }
 
+  private delivering = false;
+
+  /** Still reading new strokes or writing what it found (the page notes wait for it: no doubles)? */
+  busy(): boolean {
+    if (this.delivering) return true;
+    if (Object.values(this.state.reading).some((r) => !r.recover)) return true;
+    // an answer just arrived: it is about to be written
+    return this.state.pending.length > 0 && Date.now() - this.lastFlush < 5000;
+  }
+
   private dir(): Directory {
     const d = new Directory(Paths.document, "http");
     d.create({ intermediates: true, idempotent: true });
@@ -269,6 +279,7 @@ export class PhoneEvents {
     const task = NeoPenBle.beginBackgroundTask("penna-attivita");
     const items = this.state.pending;
     this.state.pending = [];
+    this.delivering = true;
     try {
       const keep: Found[] = [];
       const made = new Set(this.state.made);
@@ -308,6 +319,7 @@ export class PhoneEvents {
       this.save();
       throw e;
     } finally {
+      this.delivering = false;
       NeoPenBle.endBackgroundTask(task);
     }
   }

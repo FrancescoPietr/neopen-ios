@@ -6,6 +6,7 @@ import { fromBase64, toBase64 } from "../core/bytes";
 import { PenSession, SessionError, SessionNote } from "../core/session";
 import { RelayClient } from "../core/relay";
 import { BackgroundRelayClient } from "./backgroundRelay";
+import { PageNotes } from "./pageNotes";
 import { PhoneEvents } from "./phoneEvents";
 import { agenda } from "./agenda";
 import { startOutputs } from "./outputs";
@@ -25,13 +26,15 @@ export interface Settings {
   testKey: string;
   /** What you write with the pen goes to the calendar (tasks with a time) and the tasks (the others), from the phone. */
   phoneEvents: boolean;
+  /** Pages → Obsidian notes on the phone (the plugin's engine), also with Obsidian closed. */
+  pageNotes: boolean;
   /** iPhone calendars for the pen's events (none = the default calendar). */
   penCalendars: string[];
   /** Before: a single calendar. */
   penCalendar?: string;
 }
 
-const DEFAULT_SETTINGS: Settings = { scriptURL: "", secret: "", live: true, deleteAfterDownload: false, skipUnchanged: false, penPassword: "", testKey: "", phoneEvents: false, penCalendars: [] };
+const DEFAULT_SETTINGS: Settings = { scriptURL: "", secret: "", live: true, deleteAfterDownload: false, skipUnchanged: false, penPassword: "", testKey: "", phoneEvents: false, pageNotes: true, penCalendars: [] };
 
 /** One calendar (before) → a list of calendars. */
 function migrate(s: Settings): Settings {
@@ -78,6 +81,15 @@ class AppModel {
     () => ({ enabled: this.settings.phoneEvents, apiKey: this.settings.testKey, calendarIds: this.settings.penCalendars }),
     (m) => this.write(m)
   );
+  readonly pageNotes = new PageNotes(
+    this.store,
+    () => ({
+      enabled: this.settings.pageNotes,
+      relay: RelayClient.looksValid(this.settings.scriptURL.trim(), this.settings.secret.trim()) ? { url: this.settings.scriptURL.trim(), secret: this.settings.secret.trim() } : null,
+    }),
+    () => this.phoneEvents.busy(),
+    (m) => this.write(m)
+  );
   private session: PenSession | null = null;
   private logFile = new LogFile();
   private logLines: LogLine[] = [];
@@ -117,21 +129,26 @@ class AppModel {
       this.checkTests();
       this.phoneEvents.poll();
     }, 3000);
+    // pages written while the app was closed (or not yet transcribed): their Obsidian notes
+    setTimeout(() => this.pageNotes.request(), 6000);
     // a request is over (also with the phone locked: iOS wakes the app): its answer is used right away
     NeoPenBle.addListener("onHttpDone", () => {
       this.checkTests();
       this.phoneEvents.poll();
+      this.pageNotes.tick();
     });
     // back in the app: what was waiting for the calendar access or the vault folder is written now
     AppState.addEventListener("change", (st) => {
       if (st === "active") {
         this.phoneEvents.poll();
         this.phoneEvents.flush(true);
+        this.pageNotes.request();
       }
     });
     setInterval(() => {
       this.checkTests();
       this.phoneEvents.poll();
+      this.pageNotes.tick();
     }, 4000);
 
     NeoPenBle.addListener("onLog", (e) => this.write(e.message));
@@ -214,6 +231,8 @@ class AppModel {
     } finally {
       NeoPenBle.endBackgroundTask(task);
     }
+    // then the pages become Obsidian notes (after the appointments and tasks above are done)
+    this.pageNotes.request();
   }
 
   private sessionNote(n: SessionNote): void {
@@ -230,6 +249,7 @@ class AppModel {
       case "pageUpdated":
         this.uploader.schedule(4);
         this.phoneEvents.strokesArrived();
+        this.pageNotes.strokesArrived();
         break;
       case "syncFinished":
         this.write(n.pages > 0 ? `Memoria della penna letta: ${n.pages} pagine con ${n.newStrokes} tratti nuovi.` : "Memoria della penna letta: niente di nuovo.");
@@ -331,6 +351,7 @@ class AppModel {
     this.configureUploader();
     // just turned on: set the starting point (what is already written is not sent)
     if (patch.phoneEvents) this.phoneEvents.kick();
+    if (patch.pageNotes) this.pageNotes.request();
     this.emit();
   };
 

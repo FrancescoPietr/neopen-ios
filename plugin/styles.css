@@ -1,0 +1,258 @@
+.neopen-view { display: flex; flex-direction: column; gap: 8px; height: 100%; padding: 12px; }
+.neopen-head { display: flex; flex-direction: column; gap: 8px; }
+.neopen-status { font-weight: 600; color: var(--text-muted); }
+.neopen-status.is-connected { color: var(--color-green); }
+.neopen-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.neopen-progress { font-size: var(--font-ui-small); color: var(--text-accent); min-height: 1em; }
+.neopen-page-label { font-size: var(--font-ui-smaller); color: var(--text-faint); }
+.neopen-canvas-wrap { flex: 1 1 55%; min-height: 220px; border-radius: 8px; background: var(--background-secondary); overflow: hidden; }
+.neopen-canvas { display: block; }
+.neopen-log-title { font-size: var(--font-ui-smaller); text-transform: uppercase; letter-spacing: .05em; color: var(--text-faint); }
+.neopen-log { flex: 0 1 30%; min-height: 90px; overflow-y: auto; font-family: var(--font-monospace); font-size: 11px; color: var(--text-muted); background: var(--background-secondary); border-radius: 6px; padding: 6px 8px; }
+.neopen-log-line { white-space: pre-wrap; word-break: break-word; }
+.neopen-statusbar { cursor: pointer; }
+.neopen-diag { white-space: pre-wrap; font-size: 12px; max-height: 50vh; overflow: auto; background: var(--background-secondary); padding: 10px; border-radius: 6px; user-select: text; }
+.neopen-diag-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+.neopen-rule { border: 1px solid var(--background-modifier-border); border-radius: 8px; padding: 0 12px; margin: 8px 0; }
+.neopen-page-label-inline { font-size: var(--font-ui-smaller); color: var(--text-faint); border-top: 1px dashed var(--background-modifier-border); padding-top: 2px; margin-top: 6px; }
+.neopen-recover-modal { width: min(720px, 92vw); }
+.neopen-recover-tools { display: flex; gap: 8px; margin: 8px 0; flex-wrap: wrap; }
+.neopen-recover-list { max-height: 55vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.neopen-recover-row { display: flex; align-items: center; gap: 12px; padding: 8px; border-radius: 8px; border: 1px solid var(--background-modifier-border); cursor: pointer; }
+.neopen-recover-row:hover { background: var(--background-modifier-hover); }
+.neopen-recover-thumb { width: 96px; height: 64px; flex: none; background: #fff; border-radius: 4px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.neopen-recover-thumb img { max-width: 100%; max-height: 100%; }
+.neopen-recover-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.neopen-recover-title { font-weight: 600; }
+.neopen-recover-meta { font-size: var(--font-ui-smaller); color: var(--text-muted); }
+.neopen-recover-status { font-size: var(--font-ui-smaller); color: var(--text-faint); }
+.neopen-recover-status.is-missing { color: var(--text-accent); }
+.neopen-recover-footer { display: flex; justify-content: flex-end; margin-top: 12px; }
+
+/* Memoria della penna */
+.neopen-warning {
+  color: var(--text-error);
+  font-weight: 600;
+}
+.neopen-recover-nothumb {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  text-align: center;
+  padding: 8px 4px;
+}
+.neopen-recover-footer {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+/* Disegno della pagina nella nota: miniatura, clic per vederla intera */
+.markdown-rendered img[src*="_pagine"],
+.markdown-source-view img[src*="_pagine"] {
+  max-width: 220px !important;
+  max-height: 300px;
+  width: auto !important;
+  height: auto;
+  cursor: zoom-in;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  background: #fff;
+}
+.neopen-image-modal {
+  width: 92vw;
+  max-width: 92vw;
+  height: 90vh;
+}
+.neopen-image-modal .modal-content {
+  height: 100%;
+}
+.neopen-image-wrap {
+  overflow: auto;
+  height: 100%;
+  display: flex;
+  touch-action: none;
+}
+.neopen-image-wrap img {
+  margin: auto;
+  max-width: none;
+  cursor: zoom-in;
+  background: #fff;
+  border-radius: 6px;
+  user-select: none;
+}
+.neopen-image-wrap.is-zoomed {
+  display: block;
+}
+.neopen-image-wrap.is-zoomed img {
+  cursor: zoom-out;
+}
+
+/* Plugin "Image in Editor": mostrerebbe una seconda copia del disegno della pagina. La nascondiamo
+   (Obsidian mostra già l'immagine da solo). */
+.oz-image-widget-cm6:has(img[src*="_pagine"]),
+.oz-image-widget-cm6:has(img[data-path*="_pagine"]) {
+  display: none !important;
+}
+
+/* Disegno della pagina in un riquadro chiuso («Pagina N»): si apre con un clic */
+.callout[data-callout="pagina"] {
+  --callout-color: 140, 140, 140;
+  --callout-icon: lucide-file-image;
+  background-color: transparent;
+}
+.callout[data-callout="pagina"] .callout-title {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+}
+
+/* Disegni nelle note: tratti trasparenti, scritte come testo della nota (spostabili e modificabili) */
+.neopen-drawing {
+  position: relative;
+  container-type: inline-size;
+  max-width: 100%;
+  margin: 0.4em 0;
+  color: var(--text-normal);
+}
+.neopen-drawing > svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  color: var(--neopen-ink, currentColor);
+  overflow: visible;
+}
+.neopen-drawing.is-missing {
+  color: var(--text-muted);
+  font-size: var(--font-smaller);
+}
+.neopen-drawing-label,
+.neopen-drawing-input {
+  position: absolute;
+  line-height: 1;
+  white-space: pre;
+  font-family: inherit;
+  color: inherit;
+}
+.neopen-drawing-label {
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  border-radius: 3px;
+}
+.neopen-drawing-label:hover {
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+.neopen-drawing-label.is-dragging {
+  cursor: grabbing;
+}
+.neopen-drawing-input {
+  margin: 0;
+  padding: 0;
+  height: auto;
+  border: none;
+  border-bottom: 1px dashed currentColor;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
+}
+.block-language-neopen-disegno {
+  background: transparent;
+}
+
+/* Disegno con il testo di fianco (come sulla carta): alto quanto le righe accanto, il testo gli scorre a lato */
+.neopen-drawing.is-beside {
+  --neopen-h: max(calc(var(--neopen-rows) * var(--neopen-lh, 1lh)), min(var(--neopen-nat, 0px), calc(12 * var(--neopen-lh, 1lh))));
+  height: var(--neopen-h);
+  width: calc(var(--neopen-h) * var(--neopen-ratio));
+  max-width: 55%;
+  margin: 0;
+}
+.neopen-drawing.is-beside > svg {
+  height: 100%;
+}
+.neopen-drawing.is-beside.text-right {
+  float: left;
+  margin-right: 1.2em;
+}
+.neopen-drawing.is-beside.text-left {
+  float: right;
+  margin-left: 1.2em;
+}
+/* (Obsidian mette contain: paint !important ai blocchi nell'editor: il disegno non potrebbe uscire di lato) */
+.markdown-source-view.mod-cm6 .cm-content > .cm-embed-block[contenteditable="false"]:has(.neopen-drawing.is-beside),
+.block-language-neopen-disegno:has(.neopen-drawing.is-beside),
+.markdown-preview-section > div:has(.neopen-drawing.is-beside) {
+  overflow: visible !important;
+  contain: none !important;
+}
+
+/* lettura: il paragrafo dopo quello accanto al disegno riparte sotto il disegno */
+.markdown-preview-section > div:has(.neopen-drawing.is-beside) + div + div {
+  clear: both;
+}
+
+.neopen-beside-spacer {
+  pointer-events: none;
+}
+
+/* Nell'editor il disegno non è un riquadro di codice: niente bordo al passaggio del mouse;
+   il pulsante </> (per vedere il blocco) resta nell'angolo, visibile solo quando ci passi sopra */
+.markdown-source-view.mod-cm6 .cm-embed-block.cm-lang-neopen-disegno,
+.markdown-source-view.mod-cm6 .cm-embed-block.cm-lang-neopen-disegno:hover {
+  box-shadow: none !important;
+  border: none !important;
+  background: transparent !important;
+}
+.cm-embed-block.cm-lang-neopen-disegno .edit-block-button {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.cm-embed-block.cm-lang-neopen-disegno .edit-block-button:hover {
+  opacity: 1;
+}
+
+/* Impostazioni: campioni della calligrafia */
+.neopen-samples {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 12px;
+  margin: 8px 0 12px;
+}
+.neopen-sample {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--background-secondary);
+}
+.neopen-sample.is-unused {
+  opacity: 0.5;
+}
+.neopen-sample img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  object-fit: contain;
+  background: #fff;
+}
+.neopen-sample-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 8px;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+.neopen-scheme-how {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+.neopen-scheme-list > li {
+  margin-bottom: 10px;
+}
+.neopen-scheme-item {
+  font-size: 1.1em;
+  letter-spacing: 0.04em;
+  margin-top: 2px;
+}

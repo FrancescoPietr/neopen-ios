@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Neo Pen – prova iPhone</title>
+<style>
+  :root { --bg:#f6f3ee; --fg:#1f1c19; --muted:#6b645c; --accent:#b4572e; --card:#fffdf9; --line:#e2dbd1; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#1d1a17; --fg:#f2ede6; --muted:#a59d93; --accent:#e08a5f; --card:#272320; --line:#3a352f; } }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:20px 16px 40px; font:16px/1.45 -apple-system, system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+  h1 { font-size:22px; margin:0 0 4px; }
+  p { color:var(--muted); margin:0 0 16px; font-size:14px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:12px; }
+  button:disabled { opacity:.5; }
+  button, select { font:inherit; border-radius:10px; border:1px solid var(--line); padding:12px 14px; width:100%; margin-top:8px; background:var(--card); color:var(--fg); }
+  button.main { background:var(--accent); color:#fff; border-color:var(--accent); font-weight:600; }
+  #status { font-weight:600; }
+  ol { padding-left:20px; margin:6px 0 0; font-size:14px; color:var(--muted); }
+  pre { white-space:pre-wrap; font:12px/1.4 ui-monospace, Menlo, monospace; margin:0; max-height:55vh; overflow:auto; }
+  .row { display:flex; gap:8px; } .row button { margin-top:8px; }
+</style>
+</head>
+<body>
+  <h1>Neo Pen – prova iPhone</h1>
+  <p>Verifica se Bluefy riesce a leggere la penna da solo, anche con il telefono bloccato. Legge soltanto la memoria della penna: non cancella e non scrive niente.</p>
+  <div class="card">
+    <div>Stato: <span id="status">disconnesso</span></div>
+    <ol>
+      <li>Accendi la penna (chiudi Neo Studio sul telefono).</li>
+      <li>Tocca «Collega la penna» e, nell'elenco di Bluefy, scegli la penna. Aspetta «memoria letta».</li>
+      <li>Senza ricaricare la pagina, scegli ogni quanto riprovare e tocca «Avvia prova automatica».</li>
+      <li>Blocca il telefono e mettilo in tasca per 20–30 minuti, scrivendo ogni tanto sul quaderno.</li>
+      <li>Riapri, tocca «Copia registro» e incollamelo in chat.</li>
+    </ol>
+    <button id="connect" class="main">Collega la penna</button>
+    <button id="diag">Diagnostica Bluetooth</button>
+    <select id="every">
+      <option value="60">Riprova ogni minuto</option>
+      <option value="120" selected>Riprova ogni 2 minuti</option>
+      <option value="300">Riprova ogni 5 minuti</option>
+    </select>
+    <button id="start">Avvia prova automatica</button>
+    <div class="row"><button id="copy">Copia registro</button><button id="clear">Cancella registro</button></div>
+  </div>
+  <div class="card"><pre id="log"></pre></div>
+  <script src="test.js"></script>
+</body>
+</html>

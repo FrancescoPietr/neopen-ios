@@ -25,6 +25,16 @@ declare class NeoPenBleModule extends NativeModule<NeoPenBleModuleEvents> {
   readVaultFile(path: string): Promise<string | null>;
   /** Writes a text file inside the vault folder (relative path). Returns "" or the error message. */
   writeVaultFile(path: string, text: string): string;
+  // the whole vault, for the Obsidian plugin's engine running on the phone (synchronous; "" or the error message)
+  vaultScan(): { path: string; folder: boolean; mtime: number; ctime: number; size: number }[];
+  vaultStat(path: string): { folder: boolean; mtime: number; ctime: number; size: number } | null;
+  vaultList(path: string): { files: string[]; folders: string[] };
+  vaultReadText(path: string): string | null;
+  vaultReadBase64(path: string): string | null;
+  vaultWriteBase64(path: string, base64: string): string;
+  vaultMkdir(path: string): string;
+  vaultRemove(path: string): string;
+  vaultRename(from: string, to: string): string;
   /**
    * POST that goes on with the phone locked: tried at once, then (if iOS takes back the time) finished by iOS by
    * itself. Body from a file path; the answer in Documents/http/<id>.body and <id>.done, then the onHttpDone event.

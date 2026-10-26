@@ -13,11 +13,14 @@
     "expo-notifications": "~58.1.5",
     "expo-sharing": "~58.0.19",
     "expo-status-bar": "~58.0.3",
+    "fflate": "^0.8.3",
+    "moment": "^2.31.0",
     "pako": "^3.0.2",
     "react": "19.3.0",
     "react-native": "0.88.0",
     "react-native-safe-area-context": "~5.10.1",
-    "react-native-svg": "15.16.0"
+    "react-native-svg": "15.16.0",
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
@@ -29,9 +32,10 @@
     "start": "expo start --dev-client",
     "ios": "expo run:ios",
     "typecheck": "tsc --noEmit -p . && tsc -p tsconfig.test.json",
-    "test": "tsx --test test/*.test.ts",
+    "test": "tsx --tsconfig tsconfig.engine.json --test test/*.test.ts",
     "build:dev": "eas build --profile development --platform ios",
-    "build:preview": "eas build --profile preview --platform ios"
+    "build:preview": "eas build --profile preview --platform ios",
+    "typecheck:plugin": "cd plugin && npm ci --silent && npx tsc --noEmit -p ."
   },
   "private": true
 }

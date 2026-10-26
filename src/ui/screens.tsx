@@ -186,7 +186,7 @@ export function HomeScreen({ go }: { go: (screen: "settings" | "log" | "look" | 
         )}
       </Section>
 
-      <Section title="Pagine" footer="Le pagine vanno allo script Google; il PC con Obsidian aperto le prende e le trascrive.">
+      <Section title="Pagine" footer="Le pagine vanno anche allo script Google: se il PC ha Obsidian aperto le prende lui; altrimenti le note le scrive il telefono (Impostazioni → Pagine → note di Obsidian).">
         <Row label="Pagine sul telefono" value={String(m.pagesCount)} />
         <Row label="Da inviare al PC" value={String(m.pendingCount)} />
         {m.lastUpload ? <Row label="Ultimo invio" value={time(m.lastUpload)} /> : null}
@@ -341,6 +341,17 @@ export function SettingsScreen() {
           }
         />
         <Button label="Prova Claude a telefono bloccato" onPress={model.testClaude} disabled={!st.testKey.trim()} />
+      </Section>
+
+      <Section
+        title="Pagine → note di Obsidian"
+        footer={
+          "Quando smetti di scrivere il telefono trascrive la pagina e scrive la sua nota nel vault, come il plugin Neo Pen in Obsidian " +
+          "(stesse regole dei #tag, template, cartella del taccuino, disegni), anche con Obsidian chiuso e il telefono bloccato. " +
+          "Usa le impostazioni e la chiave di Claude del plugin. Se il PC ha Obsidian aperto, la trascrive lui."
+        }
+      >
+        <Toggle label="Pagine → note di Obsidian" value={st.pageNotes} onChange={(v) => model.update({ pageNotes: v })} />
       </Section>
 
       <PenCalendar value={st.penCalendars} />
