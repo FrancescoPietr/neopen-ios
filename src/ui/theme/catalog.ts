@@ -68,6 +68,7 @@ export const CATALOG: Element[] = [
   { id: "lock", group: "Penna", label: "Lucchetto", strokes: [box(22, 46, 56, 42, 6), [[32, 46], [32, 32], ...arc(50, 32, 18, 180, 360), [68, 46]]] },
   { id: "settings", group: "Penna", label: "Impostazioni", strokes: [circle(50, 50, 13), circle(50, 50, 28), ...Array.from({ length: 8 }, (_, i) => { const a = (i * Math.PI) / 4; return line(50 + Math.cos(a) * 28, 50 + Math.sin(a) * 28, 50 + Math.cos(a) * 40, 50 + Math.sin(a) * 40); })] },
   { id: "log", group: "Penna", label: "Registro", strokes: [dot(16, 24), line(30, 24, 86, 24), dot(16, 50), line(30, 50, 78, 50), dot(16, 76), line(30, 76, 84, 76)] },
+  { id: "bell", group: "Penna", label: "Avvisi (campanella)", strokes: [[[30, 70], [30, 44], ...arc(50, 44, 20, 180, 360), [70, 70]], line(20, 70, 80, 70), arc(50, 76, 7, 20, 160), line(50, 14, 50, 22)] },
   { id: "palette", group: "Penna", label: "Aspetto (tavolozza)", strokes: [circle(50, 50, 38, 34), circle(64, 66, 8), dot(32, 40), dot(52, 28), dot(72, 40), dot(30, 60)] },
 
   // outlines: one line drawn by you gives its character to all lines, boxes and buttons of the app

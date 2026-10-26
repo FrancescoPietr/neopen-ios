@@ -154,7 +154,7 @@ function StatusCard({ m }: { m: Snapshot }) {
 
 // ---------------------------------------------------------------- home
 
-export function HomeScreen({ go }: { go: (screen: "settings" | "log" | "look") => void }) {
+export function HomeScreen({ go }: { go: (screen: "settings" | "log" | "look" | "alerts") => void }) {
   const m = useModel();
   return (
     <ScrollView style={s.screen} contentContainerStyle={s.content}>
@@ -195,6 +195,7 @@ export function HomeScreen({ go }: { go: (screen: "settings" | "log" | "look") =
       </Section>
 
       <Section>
+        <IconButton icon="bell" label="Avvisi e schermata di blocco" onPress={() => go("alerts")} />
         <IconButton icon="palette" label="Aspetto" onPress={() => go("look")} />
         <IconButton icon="settings" label="Impostazioni" onPress={() => go("settings")} />
         <IconButton icon="log" label="Registro" onPress={() => go("log")} />

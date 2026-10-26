@@ -1,11 +1,13 @@
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { AppState, Pressable, StyleSheet, View } from "react-native";
+import { AppState, Linking, Pressable, StyleSheet, View } from "react-native";
 import { BackBar, Glyph, HandFrame, HandLine, Paper, Text } from "./src/ui/theme/ui";
 import { T, theme, themed } from "./src/ui/theme/theme";
 import { roughBlob } from "./src/ui/theme/rough";
 import Svg, { Path } from "react-native-svg";
 import { LookScreen } from "./src/ui/look";
+import { AlertsScreen } from "./src/ui/alertsScreen";
+
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { agenda, CalEvent } from "./src/app/agenda";
 import { VaultTask } from "./src/core/tasks";
@@ -16,8 +18,8 @@ import { TasksScreen } from "./src/ui/agenda/tasks";
 import { HomeScreen, LogScreen, SettingsScreen } from "./src/ui/screens";
 
 type Tab = "tasks" | "calendar" | "pen";
-type PenScreen = "home" | "settings" | "log" | "look";
-const PEN_TITLES: Record<PenScreen, string> = { home: "", settings: "Impostazioni", log: "Registro", look: "" };
+type PenScreen = "home" | "settings" | "log" | "look" | "alerts";
+const PEN_TITLES: Record<PenScreen, string> = { home: "", settings: "Impostazioni", log: "Registro", look: "", alerts: "" };
 
 const TABS: { id: Tab; icon: string; label: string }[] = [
   { id: "tasks", icon: "tab.tasks", label: "Attività" },
@@ -36,6 +38,22 @@ export default function App() {
   const [event, setEvent] = useState<CalEvent | null>(null);
   const [adding, setAdding] = useState(false);
   const [day, setDay] = useState<string | null>(null);
+  /** From a widget: open a day of the calendar (or the month), or the tasks. */
+  const [jump, setJump] = useState<{ day: string | null; at: number } | null>(null);
+  useEffect(() => {
+    const open = (url: string | null | undefined) => {
+      const m = url ? /neotransfer:\/\/(giorno|mese|attivita)(?:\/(\d{4}-\d{2}-\d{2}))?/.exec(url) : null;
+      if (!m) return;
+      if (m[1] === "attivita") setTab("tasks");
+      else {
+        setTab("calendar");
+        setJump({ day: m[2] ?? null, at: Date.now() });
+      }
+    };
+    void Linking.getInitialURL().then(open);
+    const sub = Linking.addEventListener("url", (e) => open(e.url));
+    return () => sub.remove();
+  }, []);
 
   // the agenda starts when the app is on screen (not when iOS wakes it in the background for the pen)
   useEffect(() => {
@@ -78,12 +96,22 @@ export default function App() {
 
         <View style={{ flex: 1 }}>
           {tab === "tasks" ? <TasksScreen onTask={setTask} /> : null}
-          {tab === "calendar" ? <CalendarScreen onTask={setTask} onEvent={setEvent} onDayChange={setDay} onAdd={() => setAdding(true)} /> : null}
+          {tab === "calendar" ? <CalendarScreen onTask={setTask} onEvent={setEvent} onDayChange={setDay} onAdd={() => setAdding(true)} jump={jump} /> : null}
           {tab === "pen" ? (
             <View style={{ flex: 1 }}>
               {/* Aspetto has its own bar (inside it, the drawing screen goes back to Aspetto, not to Penna) */}
-              {pen !== "home" && pen !== "look" ? <BackBar label="Penna" onPress={() => setPen("home")} title={PEN_TITLES[pen]} /> : null}
-              {pen === "home" ? <HomeScreen go={setPen} /> : pen === "settings" ? <SettingsScreen /> : pen === "look" ? <LookScreen onBack={() => setPen("home")} /> : <LogScreen />}
+              {pen !== "home" && pen !== "look" && pen !== "alerts" ? <BackBar label="Penna" onPress={() => setPen("home")} title={PEN_TITLES[pen]} /> : null}
+              {pen === "home" ? (
+                <HomeScreen go={setPen} />
+              ) : pen === "settings" ? (
+                <SettingsScreen />
+              ) : pen === "look" ? (
+                <LookScreen onBack={() => setPen("home")} />
+              ) : pen === "alerts" ? (
+                <AlertsScreen onBack={() => setPen("home")} />
+              ) : (
+                <LogScreen />
+              )}
             </View>
           ) : null}
         </View>

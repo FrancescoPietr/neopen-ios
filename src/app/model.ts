@@ -8,6 +8,7 @@ import { RelayClient } from "../core/relay";
 import { BackgroundRelayClient } from "./backgroundRelay";
 import { PhoneEvents } from "./phoneEvents";
 import { agenda } from "./agenda";
+import { startOutputs } from "./outputs";
 import { PageStore } from "../core/store";
 import { Uploader } from "../core/uploader";
 import { checkClaudeTests, startClaudeTest } from "./bgtest";
@@ -107,6 +108,8 @@ class AppModel {
     };
     this.configureUploader();
     this.store.subscribe(() => this.emit());
+    // widgets, alerts, Live Activities (also when iOS wakes the app for the pen)
+    startOutputs();
     // background Claude test: report what finished while the app was asleep
     // and answers for the appointments (calendar from the phone)
     setTimeout(() => this.phoneEvents.poll(), 300);

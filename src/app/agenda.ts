@@ -359,6 +359,42 @@ class Agenda {
     }
   }
 
+  /**
+   * The events between two instants, straight from the iPhone calendars (for widgets, alerts, Live Activities: also
+   * with the app in the background). The same event in several calendars comes once.
+   */
+  async eventsBetween(from: Date, to: Date): Promise<CalEvent[]> {
+    try {
+      const p = await Cal.getCalendarPermissions();
+      if (!p.granted) return [];
+      const cals = await Cal.getCalendars(Cal.EntityTypes.EVENT);
+      const colors = new Map(cals.map((c) => [c.id, c.color ?? "#0A63D6"]));
+      const list = await Cal.listEvents(cals.map((c) => c.id), from, to);
+      const seen = new Set<string>();
+      const out: CalEvent[] = [];
+      for (const e of list) {
+        const ev: CalEvent = {
+          id: e.id,
+          calendarId: e.calendarId,
+          title: e.title || "(senza titolo)",
+          start: toDate(e.startDate),
+          end: toDate(e.endDate),
+          allDay: !!e.allDay,
+          color: colors.get(e.calendarId) ?? "#0A63D6",
+          location: e.location ?? null,
+          recurring: !!e.recurrenceRule,
+        };
+        const k = `${ev.title.replace(/^\s*✓\s*/, "").trim().toLowerCase()}|${ev.start.getTime()}|${ev.end.getTime()}`;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        out.push(ev);
+      }
+      return out.sort((a, b) => a.start.getTime() - b.start.getTime());
+    } catch {
+      return [];
+    }
+  }
+
   /** Makes sure the events from `from` to `to` (days) are loaded. */
   async loadEvents(from: Date, to: Date): Promise<void> {
     if (this.snap.calendarAccess !== "granted" || !this.snap.calendars.length) return;

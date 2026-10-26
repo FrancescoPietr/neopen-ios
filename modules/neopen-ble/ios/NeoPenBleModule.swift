@@ -86,6 +86,42 @@ public class NeoPenBleModule: Module {
     Function("startBackgroundPost") { (id: String, url: String, headers: [String: String], bodyPath: String) -> Bool in
       BackgroundHttp.shared.startPost(id: id, url: url, headers: headers, bodyPath: bodyPath)
     }
+
+    // ---- widgets and Live Activities (files in the App Group)
+
+    /// Writes a file shared with the widgets; returns "" or the error.
+    Function("writeShared") { (name: String, text: String) -> String in
+      SharedAgenda.write(name, text)
+    }
+
+    Function("readShared") { (name: String) -> String? in
+      SharedAgenda.read(name)
+    }
+
+    Function("reloadWidgets") {
+      SharedAgenda.reloadWidgets()
+    }
+
+    Function("liveEnabled") { () -> Bool in
+      LiveActivities.enabled
+    }
+
+    /// Starts a Live Activity (only with the app on screen): its id, or "errore: …".
+    AsyncFunction("liveStart") { (kind: String, json: String, stale: Double) -> String in
+      LiveActivities.start(kind: kind, json: json, stale: stale)
+    }.runOnQueue(.main)
+
+    AsyncFunction("liveUpdate") { (id: String, json: String, stale: Double) async -> Bool in
+      await LiveActivities.update(id: id, json: json, stale: stale)
+    }
+
+    AsyncFunction("liveEnd") { (id: String, dismissAt: Double) async in
+      await LiveActivities.end(id: id, dismissAt: dismissAt)
+    }
+
+    Function("liveList") { () -> [[String: String]] in
+      LiveActivities.list()
+    }
   }
 }
 

@@ -307,7 +307,19 @@ function NowLine() {
 
 // ---------------------------------------------------------------- screen
 
-export function CalendarScreen({ onTask, onEvent, onDayChange, onAdd }: { onTask: (t: VaultTask) => void; onEvent: (e: CalEvent) => void; onDayChange: (d: string | null) => void; onAdd: () => void }) {
+export function CalendarScreen({
+  onTask,
+  onEvent,
+  onDayChange,
+  onAdd,
+  jump,
+}: {
+  onTask: (t: VaultTask) => void;
+  onEvent: (e: CalEvent) => void;
+  onDayChange: (d: string | null) => void;
+  onAdd: () => void;
+  jump?: { day: string | null; at: number } | null;
+}) {
   const t = today();
   const [month, setMonth] = useState(ymd(new Date(parseYmd(t).getFullYear(), parseYmd(t).getMonth(), 1)));
   const [day, setDay] = useState<string | null>(null);
@@ -317,6 +329,12 @@ export function CalendarScreen({ onTask, onEvent, onDayChange, onAdd }: { onTask
     const x = parseYmd(d);
     setMonth(ymd(new Date(x.getFullYear(), x.getMonth(), 1)));
   };
+  // from a widget
+  useEffect(() => {
+    if (!jump) return;
+    if (jump.day) openDay(jump.day);
+    else setDay(null);
+  }, [jump?.at]);
   return day ? (
     <DayScreen day={day} onGo={openDay} onBack={() => setDay(null)} onTask={onTask} onEvent={onEvent} />
   ) : (

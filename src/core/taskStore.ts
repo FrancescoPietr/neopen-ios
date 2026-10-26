@@ -110,6 +110,7 @@ export interface TaskEdit {
   end?: string | null;
   priority?: Priority;
   recurrence?: string | null;
+  reminders?: string[];
 }
 
 export function editTask(fileText: string, t: VaultTask, e: TaskEdit): string | null {
@@ -126,6 +127,7 @@ export function editTask(fileText: string, t: VaultTask, e: TaskEdit): string | 
       recurrence: e.recurrence !== undefined ? e.recurrence : t.recurrence,
       doneDate: t.doneDate,
       blockId: t.blockId,
+      reminders: e.reminders !== undefined ? e.reminders : t.reminders,
     },
     indentOf(raw),
     t.dateFromNote && !dateChanged

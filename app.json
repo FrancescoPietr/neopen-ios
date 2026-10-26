@@ -14,7 +14,16 @@
         "UIBackgroundModes": [
           "bluetooth-central"
         ],
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSSupportsLiveActivities": true,
+        "NeoAppGroup": "group.com.francesco.neopen"
+      },
+      "appleTeamId": "C2Q435DM2T",
+      "entitlements": {
+        "com.apple.security.application-groups": [
+          "group.com.francesco.neopen"
+        ],
+        "com.apple.developer.usernotifications.time-sensitive": true
       }
     },
     "plugins": [
@@ -33,12 +42,20 @@
             "./assets/fonts/Fra.ttf"
           ]
         }
-      ]
+      ],
+      [
+        "expo-notifications",
+        {
+          "enableRemoteNotifications": false
+        }
+      ],
+      "@bacons/apple-targets"
     ],
     "extra": {
       "eas": {
         "projectId": "52b223ed-59f2-4bf3-8f51-0f5f7a7fea4b"
       }
-    }
+    },
+    "scheme": "neotransfer"
   }
 }

@@ -29,6 +29,19 @@ declare class NeoPenBleModule extends NativeModule<NeoPenBleModuleEvents> {
    * POST that goes on with the phone locked: tried at once, then (if iOS takes back the time) finished by iOS by
    * itself. Body from a file path; the answer in Documents/http/<id>.body and <id>.done, then the onHttpDone event.
    */
+  /** File shared with the widgets (App Group). Returns "" or the error. */
+  writeShared(name: string, text: string): string;
+  readShared(name: string): string | null;
+  /** The widgets read their data again. */
+  reloadWidgets(): void;
+  /** Live Activities allowed (Settings → NeoTransfer → Live Activities). */
+  liveEnabled(): boolean;
+  /** Starts a Live Activity (only with the app on screen). Returns its id or "errore: …". `stale`: ms (0 = none). */
+  liveStart(kind: string, json: string, stale: number): Promise<string>;
+  liveUpdate(id: string, json: string, stale: number): Promise<boolean>;
+  /** Ends it ("" = all); it stays on the lock screen until `dismissAt` (ms, 0 = right away). */
+  liveEnd(id: string, dismissAt: number): Promise<void>;
+  liveList(): { id: string; kind: string }[];
   startBackgroundPost(id: string, url: string, headers: Record<string, string>, bodyPath: string): boolean;
 }
 

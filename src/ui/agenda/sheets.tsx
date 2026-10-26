@@ -1,5 +1,7 @@
 // Quick add (Todoist + Fantastical), task editor and event details, as iOS sheets.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { alerts, eventKey } from "../../app/alerts";
+import { OffsetChips } from "../alertsScreen";
 import { Alert, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { Dot, Glyph, HandFrame, Paper, RowLine, Text, TextInput } from "../theme/ui";
 import { themed } from "../theme/theme";
@@ -145,6 +147,72 @@ export function italianRecurrence(r: string): string {
   return r.replace(/^every /, "ogni ").replace(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/g, (d) => days[d]);
 }
 
+// ---------------------------------------------------------------- alerts of a task / an event
+
+const pad = (n: number) => String(n).padStart(2, "0");
+const stamp = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+const fromStamp = (r: string) => {
+  const [y, m, d] = r.slice(0, 10).split("-").map(Number);
+  const [h, mi] = r.slice(11, 16).split(":").map(Number);
+  return new Date(y, m - 1, d, h, mi);
+};
+
+/** Your own alerts for a task: quick choices and any time ("domani 8:30"). Without them, the default ones. */
+function TaskReminders({ date, time, value, onChange, text, onText }: { date: string | null; time: string | null; value: string[]; onChange: (v: string[]) => void; text: string; onText: (t: string) => void }) {
+  const add = (d: Date) => {
+    const r = stamp(d);
+    if (!value.includes(r)) onChange([...value, r].sort());
+  };
+  const base = date && time ? fromStamp(`${date} ${time}`) : null;
+  const quick: { label: string; at: Date }[] = [];
+  if (base) {
+    quick.push({ label: "All'ora", at: base }, { label: "10 min prima", at: new Date(base.getTime() - 10 * 60_000) }, { label: "1 ora prima", at: new Date(base.getTime() - 3_600_000) });
+  }
+  if (date) {
+    const d = fromStamp(`${date} 09:00`);
+    quick.push({ label: "Quel giorno alle 9", at: d }, { label: "Il giorno prima alle 9", at: new Date(d.getTime() - 86_400_000) });
+  }
+  const parsed = text.trim() ? parseQuickAdd(`x ${text}`, today()) : null;
+  const custom = parsed && (parsed.time || parsed.date) ? fromStamp(`${parsed.date ?? date ?? today()} ${parsed.time ?? "09:00"}`) : null;
+  return (
+    <>
+      {value.length ? (
+        <View style={st.chipRow}>
+          {value.map((r) => (
+            <Chip key={r} label={`${dayLabel(r.slice(0, 10))} ${r.slice(11)}  ×`} on onPress={() => onChange(value.filter((x) => x !== r))} />
+          ))}
+        </View>
+      ) : null}
+      <View style={st.chipRow}>
+        {quick.map((q) => (
+          <Chip key={q.label} label={q.label} onPress={() => add(q.at)} />
+        ))}
+      </View>
+      <HandFrame style={[st.card, { flexDirection: "row", alignItems: "center" }]}>
+        <TextInput style={[st.input, { flex: 1 }]} value={text} onChangeText={onText} placeholder="Altro: es. domani 8:30, venerdì alle 18" />
+        {custom ? (
+          <Pressable
+            onPress={() => {
+              add(custom);
+              onText("");
+            }}
+            style={{ paddingHorizontal: 14 }}
+          >
+            <Text style={[st.barBtn, { minWidth: 0 }]}>Aggiungi</Text>
+          </Pressable>
+        ) : null}
+      </HandFrame>
+      <Text style={st.hint}>
+        {custom
+          ? `Avviso ${dayLabel(stamp(custom).slice(0, 10))} alle ${stamp(custom).slice(11)}.`
+          : value.length
+            ? "Tocca un avviso per toglierlo."
+            : "Senza avvisi scelti qui valgono quelli predefiniti (Penna → Avvisi)."}
+      </Text>
+    </>
+  );
+}
+
 // ---------------------------------------------------------------- task editor
 
 const RECURRENCES: (string | null)[] = [null, "every day", "every weekday", "every week", "every month", "every year"];
@@ -158,6 +226,8 @@ export function TaskEditor({ task, onClose }: { task: VaultTask | null; onClose:
   const [end, setEnd] = useState("");
   const [priority, setPriority] = useState<Priority>(4);
   const [recurrence, setRecurrence] = useState<string | null>(null);
+  const [reminders, setReminders] = useState<string[]>([]);
+  const [remText, setRemText] = useState("");
   useEffect(() => {
     if (!task) return;
     setText(task.text);
@@ -167,6 +237,8 @@ export function TaskEditor({ task, onClose }: { task: VaultTask | null; onClose:
     setEnd(task.end ?? "");
     setPriority(task.priority);
     setRecurrence(task.recurrence);
+    setReminders(task.reminders);
+    setRemText("");
   }, [task]);
   if (!task) return null;
   const t = today();
@@ -175,7 +247,7 @@ export function TaskEditor({ task, onClose }: { task: VaultTask | null; onClose:
   const save = async () => {
     let d = date;
     if (dateText.trim()) d = parseQuickAdd(`x ${dateText}`, t).date ?? d;
-    const ok = await agenda.edit(task, { text: text.trim() || task.text, date: d, time: okTime(time), end: okTime(time) ? okTime(end) : null, priority, recurrence });
+    const ok = await agenda.edit(task, { text: text.trim() || task.text, date: d, time: okTime(time), end: okTime(time) ? okTime(end) : null, priority, recurrence, reminders });
     if (ok) onClose();
   };
 
@@ -227,6 +299,16 @@ export function TaskEditor({ task, onClose }: { task: VaultTask | null; onClose:
       </View>
       {recurrence && date ? <Text style={st.hint}>Prossima volta dopo questa: {dayLabel(nextOccurrence(recurrence, date) ?? date)}</Text> : null}
 
+      <Label>Avvisi</Label>
+      <TaskReminders
+        date={date}
+        time={okTime(time)}
+        value={reminders}
+        onChange={setReminders}
+        text={remText}
+        onText={setRemText}
+      />
+
       <HandFrame style={[st.card, { marginTop: 24 }]}>
         {isAppTask(task) ? null : (
           <Pressable style={st.action} onPress={() => void Linking.openURL(agenda.obsidianLink(task.file))}>
@@ -272,6 +354,7 @@ export function EventSheet({ ev, onClose }: { ev: CalEvent | null; onClose: () =
         {cal ? <Text style={st.evLine}>Calendario: {cal.title}</Text> : null}
         {ev.recurring ? <Text style={st.evLine}>Evento ricorrente</Text> : null}
       </HandFrame>
+      <EventReminders ev={ev} />
       <HandFrame style={[st.card, { marginTop: 24 }]}>
         <Pressable style={st.action} onPress={() => void Linking.openURL(`calshow:${Math.floor(ev.start.getTime() / 1000 - 978307200)}`)}>
           <Text style={st.actionText}>Apri nel Calendario di iPhone</Text>
@@ -291,6 +374,25 @@ export function EventSheet({ ev, onClose }: { ev: CalEvent | null; onClose: () =
         ) : null}
       </HandFrame>
     </Sheet>
+  );
+}
+
+function EventReminders({ ev }: { ev: CalEvent }) {
+  useSyncExternalStore(alerts.subscribe, alerts.version);
+  const s = alerts.get();
+  const key = eventKey(ev);
+  const own = s.eventAlerts[key];
+  return (
+    <>
+      <Label>Avvisi</Label>
+      <OffsetChips value={own ?? (ev.allDay ? [] : s.eventOffsets)} onChange={(v) => alerts.setEventAlerts(key, v)} />
+      <Text style={st.hint}>{own ? "Avvisi scelti per questo evento." : "Come tutti gli altri eventi (Penna → Avvisi)."}</Text>
+      {own ? (
+        <Pressable onPress={() => alerts.setEventAlerts(key, null)} style={{ marginHorizontal: 28, marginTop: 6 }}>
+          <Text style={[st.barBtn, { minWidth: 0 }]}>Come gli altri eventi</Text>
+        </Pressable>
+      ) : null}
+    </>
   );
 }
 

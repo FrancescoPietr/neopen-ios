@@ -17,6 +17,7 @@ import { PageStore } from "../core/store";
 import { toBase64 } from "../core/bytes";
 import { parseYmd } from "../core/tasks";
 import { agenda } from "./agenda";
+import { refreshOutputs } from "./outputs";
 import { readJson, writeJson } from "./files";
 
 interface Found {
@@ -300,6 +301,7 @@ export class PhoneEvents {
       this.state.pending.push(...keep);
       this.save();
       agenda.changedOutside();
+      refreshOutputs(500);
     } catch (e) {
       // nothing is lost: tried again at the next answer or when the app opens
       this.state.pending.unshift(...items);

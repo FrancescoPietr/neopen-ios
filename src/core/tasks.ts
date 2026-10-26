@@ -34,6 +34,8 @@ export interface VaultTask {
   parent: string | null;
   /** Obsidian block id at the end of the line (" ^abc"), e.g. "penna-…" for tasks the phone added from the pen. */
   blockId: string | null;
+  /** Your own alerts for this task ("⏰ 2026-10-26 09:00" on the line), oldest first. */
+  reminders: string[];
 }
 
 export const TASKS_FOLDER = "Attività";
@@ -76,6 +78,7 @@ export function parseTaskLine(raw: string): Omit<VaultTask, "id" | "file" | "lin
     rest = rest.slice(0, b.index);
   }
   let doneDate: string | null = null;
+  const reminders: string[] = [];
   let date: string | null = null;
   let recurrence: string | null = null;
   let priority: Priority = 4;
@@ -88,13 +91,19 @@ export function parseTaskLine(raw: string): Omit<VaultTask, "id" | "file" | "lin
       rest = rest.slice(0, x.index);
       changed = true;
     }
+    x = /\s*⏰\s*(\d{4}-\d{2}-\d{2}[ T]\d{1,2}:\d{2})\s*$/u.exec(rest);
+    if (x) {
+      reminders.unshift(x[1].replace("T", " ").replace(/ (\d):/, " 0$1:"));
+      rest = rest.slice(0, x.index);
+      changed = true;
+    }
     x = /\s*📅\s*(\d{4}-\d{2}-\d{2})\s*$/u.exec(rest);
     if (x) {
       date = x[1];
       rest = rest.slice(0, x.index);
       changed = true;
     }
-    x = /\s*🔁\s*([^🔺⏫🔼🔽📅✅]+?)\s*$/u.exec(rest);
+    x = /\s*🔁\s*([^🔺⏫🔼🔽📅✅⏰]+?)\s*$/u.exec(rest);
     if (x) {
       recurrence = x[1].trim();
       rest = rest.slice(0, x.index);
@@ -118,7 +127,7 @@ export function parseTaskLine(raw: string): Omit<VaultTask, "id" | "file" | "lin
   const text = rest.trim();
   const labels = [...text.matchAll(/(?:^|\s)#([\p{L}\p{N}_\-/]+)/gu)].map((l) => l[1].toLowerCase());
   const title = text.replace(/(?:^|\s)#[\p{L}\p{N}_\-/]+/gu, "").replace(/\s{2,}/g, " ").trim() || text;
-  return { indent, done, text, title, labels, date, time, end, priority, recurrence, doneDate, blockId };
+  return { indent, done, text, title, labels, date, time, end, priority, recurrence, doneDate, blockId, reminders };
 }
 
 /** All tasks of a markdown file. */
@@ -168,6 +177,7 @@ export interface TaskFields {
   recurrence: string | null;
   doneDate: string | null;
   blockId?: string | null;
+  reminders?: string[];
 }
 
 /** The markdown line for a task (indentation as a string, e.g. "\t"). */
@@ -177,6 +187,7 @@ export function formatTaskLine(f: TaskFields, indent = "", dateFromNote = false)
   parts.push(f.text.trim());
   if (PRI_EMOJI[f.priority]) parts.push(PRI_EMOJI[f.priority]);
   if (f.recurrence) parts.push(`🔁 ${f.recurrence}`);
+  for (const r of f.reminders ?? []) parts.push(`⏰ ${r}`);
   if (f.date && !dateFromNote) parts.push(`📅 ${f.date}`);
   if (f.done && f.doneDate) parts.push(`✅ ${f.doneDate}`);
   if (f.blockId) parts.push(`^${f.blockId}`);
@@ -250,11 +261,16 @@ export function nextOccurrence(recurrence: string, from: string): string | null 
  * next date above the completed one (like the Tasks plugin), so the history stays in the note.
  */
 export function toggleLines(t: VaultTask, today: string, indent = ""): string[] {
-  const base: TaskFields = { done: t.done, text: t.text, date: t.date, time: t.time, end: t.end, priority: t.priority, recurrence: t.recurrence, doneDate: t.doneDate, blockId: t.blockId };
+  const base: TaskFields = { done: t.done, text: t.text, date: t.date, time: t.time, end: t.end, priority: t.priority, recurrence: t.recurrence, doneDate: t.doneDate, blockId: t.blockId, reminders: t.reminders };
   if (t.done) return [formatTaskLine({ ...base, done: false, doneDate: null }, indent, t.dateFromNote)];
   const doneLine = formatTaskLine({ ...base, done: true, doneDate: today }, indent, t.dateFromNote);
   if (!t.recurrence) return [doneLine];
   const next = nextOccurrence(t.recurrence, t.date ?? today);
   if (!next) return [doneLine];
-  return [formatTaskLine({ ...base, done: false, doneDate: null, date: next, blockId: null }, indent), doneLine];
+  // the next copy keeps the alerts moved by the same number of days
+  const shift = (r: string) => {
+    const days = Math.round((parseYmd(next).getTime() - parseYmd(t.date ?? today).getTime()) / 86_400_000);
+    return `${addDays(r.slice(0, 10), days)}${r.slice(10)}`;
+  };
+  return [formatTaskLine({ ...base, done: false, doneDate: null, date: next, blockId: null, reminders: (t.reminders ?? []).map(shift) }, indent), doneLine];
 }
