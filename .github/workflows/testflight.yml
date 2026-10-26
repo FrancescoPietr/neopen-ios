@@ -1,14 +1,14 @@
 # Build the app on GitHub's Mac (free for this public repository, no EAS build minutes used) and send it to TestFlight.
-# Starts when a tag "testflight-…" is pushed (e.g. `git tag testflight-17 && git push origin testflight-17`).
+# Starts with a push whose commit message contains "[testflight]".
 # Needs one secret: EXPO_TOKEN (expo.dev → Account settings → Access tokens). Signing certificate, profile and the
 # App Store Connect key are the ones already saved on EAS (the same used by `eas build` / `eas submit`).
 name: testflight
 on:
   push:
-    tags: ["testflight-*"]
   workflow_dispatch:
 jobs:
   testflight:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[testflight]')
     runs-on: macos-26
     timeout-minutes: 90
     env:
