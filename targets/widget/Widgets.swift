@@ -61,6 +61,171 @@ struct ToggleTaskIntent: AppIntent {
   }
 }
 
+// ---------------------------------------------------------------- the month of the Agenda widget: arrows and switch
+
+struct MonthStepIntent: AppIntent {
+  static var title: LocalizedStringResource = "Cambia mese"
+  static var isDiscoverable: Bool = false
+  /// -1 / +1: one month back / ahead; 0: back to this month.
+  @Parameter(title: "Passo") var step: Int
+
+  init() {}
+  init(step: Int) { self.step = step }
+
+  func perform() async throws -> some IntentResult {
+    var s = WState.load()
+    let now = Date()
+    s.offset = step == 0 ? 0 : s.monthOffset(now: now) + step
+    s.day = ymd(now)
+    s.save()
+    return .result()
+  }
+}
+
+struct AgendaModeIntent: AppIntent {
+  static var title: LocalizedStringResource = "Mese o lista"
+  static var isDiscoverable: Bool = false
+  @Parameter(title: "Grandezza") var size: String
+
+  init() {}
+  init(size: String) { self.size = size }
+
+  func perform() async throws -> some IntentResult {
+    var s = WState.load()
+    s.list[size] = !(s.list[size] ?? false)
+    if s.list[size] == true { s.offset = 0 }
+    s.save()
+    return .result()
+  }
+}
+
+/// A small drawn symbol: your drawing when there is one, otherwise the provisional one (100 × 100).
+struct Glyph: View {
+  let theme: Theme
+  let id: String
+  let fallback: [[CGPoint]]
+  var color: Color? = nil
+  var body: some View {
+    let drawn = theme.strokes(id)
+    StrokesShape(strokes: drawn ?? fallback, fit: drawn != nil)
+      .stroke(color ?? theme.ink, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+  }
+}
+
+private func pts(_ p: [(CGFloat, CGFloat)]) -> [CGPoint] { p.map { CGPoint(x: $0.0, y: $0.1) } }
+let glyphPrev = [pts([(62, 18), (34, 50), (62, 82)])]
+let glyphNext = [pts([(38, 18), (66, 50), (38, 82)])]
+let glyphList = [pts([(14, 24)]), pts([(30, 24), (88, 24)]), pts([(14, 50)]), pts([(30, 50), (80, 50)]), pts([(14, 76)]), pts([(30, 76), (86, 76)])]
+let glyphMonth = [
+  pts([(12, 20), (88, 20), (88, 88), (12, 88), (12, 20)]), pts([(12, 38), (88, 38)]), pts([(32, 10), (32, 28)]), pts([(68, 10), (68, 28)]),
+  pts([(32, 55)]), pts([(50, 55)]), pts([(68, 55)]), pts([(32, 72)]), pts([(50, 72)]),
+]
+
+/// The button that switches the Agenda widget between the month and the list of today.
+struct ModeButton: View {
+  let theme: Theme
+  let size: String
+  /// What it switches to.
+  let toList: Bool
+  var body: some View {
+    Button(intent: AgendaModeIntent(size: size)) {
+      Glyph(theme: theme, id: toList ? "log" : "tab.calendar", fallback: toList ? glyphList : glyphMonth, color: theme.soft)
+        .frame(width: 13, height: 13)
+        .frame(width: 24, height: 22)
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+  }
+}
+
+/// The month like in Fantastical: arrows to move, the week of today marked, today circled, a dot where there is
+/// something; tap a day to open it in the app.
+struct MiniMonth: View {
+  let theme: Theme
+  let data: WData
+  let now: Date
+  let offset: Int
+  /// "medium" / "large": which widget the switch button belongs to.
+  let size: String
+  var body: some View {
+    let cal = Calendar.current
+    let thisMonth = cal.date(from: cal.dateComponents([.year, .month], from: now)) ?? now
+    let first = cal.date(byAdding: .month, value: offset, to: thisMonth) ?? thisMonth
+    let lead = (first.weekday + 6) % 7
+    let gridStart = first.adding(days: -lead)
+    let count = cal.range(of: .day, in: .month, for: first)?.count ?? 30
+    let weeks = Int(ceil(Double(lead + count) / 7))
+    let month = cal.component(.month, from: first)
+    let year = cal.component(.year, from: first)
+    let today = ymd(now)
+    let big = size == "large"
+    VStack(spacing: 0) {
+      HStack(spacing: 0) {
+        StepButton(theme: theme, step: -1)
+        Spacer(minLength: 0)
+        Button(intent: MonthStepIntent(step: 0)) {
+          HStack(spacing: 4) {
+            Text(monthsShort[month - 1].capitalized).font(theme.font(big ? 15 : 13, bold: true)).foregroundStyle(theme.ink)
+            Text(String(year)).font(theme.font(big ? 15 : 13, bold: true)).foregroundStyle(theme.accent)
+          }
+        }
+        .buttonStyle(.plain)
+        Spacer(minLength: 0)
+        StepButton(theme: theme, step: 1)
+        ModeButton(theme: theme, size: size, toList: true)
+      }
+      .frame(height: 22)
+      HStack(spacing: 0) {
+        ForEach(Array(["L", "M", "M", "G", "V", "S", "D"].enumerated()), id: \.offset) { i, w in
+          Text(w).font(theme.font(big ? 10 : 9)).foregroundStyle(i == 6 ? theme.accent : theme.soft).frame(maxWidth: .infinity)
+        }
+      }
+      .padding(.bottom, 1)
+      ForEach(0..<weeks, id: \.self) { w in
+        let days = (0..<7).map { gridStart.adding(days: w * 7 + $0) }
+        HStack(spacing: 0) {
+          ForEach(days, id: \.self) { d in
+            let key = ymd(d)
+            let inMonth = cal.component(.month, from: d) == month
+            Link(destination: URL(string: "neotransfer://giorno/\(key)")!) {
+              ZStack {
+                if key == today { TodayRing(theme: theme).frame(width: big ? 21 : 17, height: big ? 21 : 17) }
+                Text("\(d.dayNumber)")
+                  .font(theme.font(big ? 12 : 11, bold: key == today))
+                  .foregroundStyle(key == today ? theme.accent : inMonth ? theme.ink : theme.faint)
+              }
+              .frame(maxWidth: .infinity, maxHeight: .infinity)
+              .overlay(alignment: .bottom) {
+                if inMonth && key != today && data.busy(key) { InkDot(color: theme.soft, size: 2.6).offset(y: big ? 0 : 1) }
+              }
+            }
+          }
+        }
+        .frame(maxHeight: .infinity)
+        .background {
+          if days.contains(where: { ymd($0) == today }) {
+            RoundedRectangle(cornerRadius: 6).fill(theme.line.opacity(0.35))
+          }
+        }
+      }
+    }
+  }
+}
+
+struct StepButton: View {
+  let theme: Theme
+  let step: Int
+  var body: some View {
+    Button(intent: MonthStepIntent(step: step)) {
+      Glyph(theme: theme, id: step < 0 ? "nav.prev" : "nav.next", fallback: step < 0 ? glyphPrev : glyphNext)
+        .frame(width: 8, height: 12)
+        .frame(width: 22, height: 22)
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+  }
+}
+
 // ---------------------------------------------------------------- pieces
 
 struct Rule: View {
@@ -406,12 +571,24 @@ struct AgendaView: View {
       .widgetURL(URL(string: "neotransfer://giorno/\(ymd(entry.date))"))
       .paper(theme)
     case .systemMedium:
-      HStack(alignment: .top, spacing: 12) {
-        VStack(alignment: .leading, spacing: 5) {
-          Text("\(weekdaysShort[entry.date.weekday]) \(entry.date.dayNumber)").font(theme.font(15, bold: true)).foregroundStyle(theme.accent)
-          if items.isEmpty { Empty(theme: theme, text: "Niente in programma") }
-          ForEach(items.prefix(3)) { EventLine(theme: theme, item: $0, size: 12) }
-          Spacer(minLength: 0)
+      let state = WState.load()
+      HStack(alignment: .top, spacing: 14) {
+        Group {
+          if state.list["medium"] ?? false {
+            VStack(alignment: .leading, spacing: 5) {
+              HStack(spacing: 0) {
+                Text("\(weekdaysShort[entry.date.weekday]) \(entry.date.dayNumber)").font(theme.font(15, bold: true)).foregroundStyle(theme.accent)
+                Spacer(minLength: 0)
+                ModeButton(theme: theme, size: "medium", toList: false).padding(.top, -3)
+              }
+              if items.isEmpty { Empty(theme: theme, text: "Niente in programma") }
+              ForEach(items.prefix(3)) { EventLine(theme: theme, item: $0, size: 12) }
+              Spacer(minLength: 0)
+            }
+          } else {
+            MiniMonth(theme: theme, data: entry.data, now: entry.date, offset: state.monthOffset(now: entry.date), size: "medium")
+              .padding(.top, -4)
+          }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         VStack(alignment: .leading, spacing: 5) {
@@ -425,16 +602,35 @@ struct AgendaView: View {
       .widgetURL(URL(string: "neotransfer://giorno/\(ymd(entry.date))"))
       .paper(theme)
     default:
-      VStack(alignment: .leading, spacing: 5) {
-        DayHeader(theme: theme, date: entry.date, big: 30)
-        Text("Calendario").font(theme.font(13, bold: true)).foregroundStyle(theme.soft)
-        if items.isEmpty { Empty(theme: theme, text: "Niente in programma") }
-        ForEach(items.prefix(4)) { EventLine(theme: theme, item: $0, size: 13) }
-        Rule(theme: theme).padding(.vertical, 2)
-        Text("Attività").font(theme.font(13, bold: true)).foregroundStyle(theme.soft)
-        if tasks.isEmpty { Empty(theme: theme, text: "Niente da fare") }
-        ForEach(Array(tasks.prefix(items.count > 2 ? 5 : 7))) { TaskLine(theme: theme, task: $0, size: 13) }
-        Spacer(minLength: 0)
+      let state = WState.load()
+      HStack(alignment: .top, spacing: 14) {
+        VStack(alignment: .leading, spacing: 5) {
+          if state.list["large"] ?? false {
+            HStack(spacing: 0) {
+              DayHeader(theme: theme, date: entry.date, big: 28)
+              Spacer(minLength: 0)
+              ModeButton(theme: theme, size: "large", toList: false)
+            }
+            if items.isEmpty { Empty(theme: theme, text: "Niente in programma") }
+            ForEach(items.prefix(8)) { EventLine(theme: theme, item: $0, size: 13) }
+          } else {
+            MiniMonth(theme: theme, data: entry.data, now: entry.date, offset: state.monthOffset(now: entry.date), size: "large")
+              .frame(height: 168)
+              .padding(.top, -4)
+            Rule(theme: theme).padding(.vertical, 2)
+            if items.isEmpty { Empty(theme: theme, text: "Niente in programma") }
+            ForEach(items.prefix(3)) { EventLine(theme: theme, item: $0, size: 12) }
+          }
+          Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: 5) {
+          Text("Attività").font(theme.font(16, bold: true)).foregroundStyle(theme.ink)
+          if tasks.isEmpty { Empty(theme: theme, text: "Niente da fare") }
+          ForEach(Array(tasks.prefix(11))) { TaskLine(theme: theme, task: $0, size: 13) }
+          Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
       }
       .widgetURL(URL(string: "neotransfer://giorno/\(ymd(entry.date))"))
       .paper(theme)
@@ -446,7 +642,7 @@ struct AgendaWidget: Widget {
   var body: some WidgetConfiguration {
     StaticConfiguration(kind: "NeoAgenda", provider: NeoProvider()) { AgendaView(entry: $0) }
       .configurationDisplayName("Agenda")
-      .description("Calendario e attività insieme.")
+      .description("Il mese (o gli impegni di oggi) e le attività insieme.")
       .supportedFamilies([.systemSmall, .systemMedium, .systemLarge, .accessoryRectangular, .accessoryCircular, .accessoryInline])
   }
 }

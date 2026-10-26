@@ -1,5 +1,5 @@
 // "Avvisi e schermata di blocco": when to be alerted (events, tasks with a time, the day's tasks), important alerts
-// that come through Full Immersion, and the two Live Activities (countdown, tasks of today) — each can be switched off.
+// that come through Full Immersion, and the lock-screen card (appointments with a countdown, tasks of today) — each part can be switched off.
 import { useState, useSyncExternalStore } from "react";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { alerts } from "../app/alerts";
@@ -127,15 +127,15 @@ export function AlertsScreen({ onBack }: { onBack: () => void }) {
 
         <Section
           title="Schermata di blocco"
-          footer="iOS li mostra solo se l'app li apre mentre è sullo schermo: compaiono appena apri l'app e poi si aggiornano da soli, anche quando scrivi con la penna. Dopo 8–12 ore iOS li toglie: tornano la volta dopo che apri l'app. Se non compaiono: Impostazioni di iPhone → NeoTransfer → Attività in tempo reale."
+          footer="Un unico riquadro in basso. iOS lo mostra solo se l'app lo apre mentre è sullo schermo: compare appena apri l'app e poi si aggiorna da solo, anche quando scrivi con la penna. Dopo 8–12 ore iOS lo toglie: torna la volta dopo che apri l'app. Se non compaiono: Impostazioni di iPhone → NeoTransfer → Attività in tempo reale."
         >
           <Toggle
-            label="Conto alla rovescia"
-            sub="Il prossimo impegno delle prossime 8 ore, con quanto manca (e poi quanto dura ancora). Anche nella Dynamic Island."
+            label="Impegni con il conto alla rovescia"
+            sub="Gli impegni delle prossime 24 ore, il più vicino in cima, con quanto manca (e poi quanto dura ancora). Anche nella Dynamic Island."
             value={s.countdown}
             onChange={(v) => alerts.set({ countdown: v })}
           />
-          <Toggle label="Attività di oggi" sub="Le attività di oggi sulla schermata di blocco, con quelle già fatte barrate." value={s.todayCard} onChange={(v) => alerts.set({ todayCard: v })} />
+          <Toggle label="Attività di oggi" sub="Le attività di oggi ancora da fare, sotto gli impegni: quando ne completi una sparisce." value={s.todayCard} onChange={(v) => alerts.set({ todayCard: v })} />
         </Section>
 
         <Section

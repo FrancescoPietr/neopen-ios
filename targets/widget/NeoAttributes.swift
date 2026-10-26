@@ -1,17 +1,22 @@
 import ActivityKit
 import Foundation
 
-// The data of the app's Live Activities (the countdown to the next appointment, the tasks of today).
+// The data of the app's Live Activity on the lock screen: the coming appointments with a countdown, and the tasks of
+// today (older versions also had a separate "event" countdown).
 // The SAME definition is in targets/widget/NeoAttributes.swift: iOS pairs the app and the widget by this type.
 public struct NeoAttributes: ActivityAttributes {
   public struct Item: Codable, Hashable {
     public var title: String
     public var time: String
     public var done: Bool
+    /// Calendar events only: when it starts and ends, and the color of its calendar.
+    public var start: Date?
+    public var end: Date?
+    public var color: String?
   }
 
   public struct ContentState: Codable, Hashable {
-    /// "event" (countdown) or "tasks" (the tasks of today).
+    /// "today" (appointments + tasks), or the older "event" / "tasks".
     public var kind: String
     public var title: String
     public var subtitle: String
@@ -19,6 +24,8 @@ public struct NeoAttributes: ActivityAttributes {
     public var end: Date
     public var color: String
     public var items: [Item]
+    /// "today": the appointments, nearest first (items holds the tasks).
+    public var events: [Item]?
     public var more: Int
     public var done: Int
     public var total: Int

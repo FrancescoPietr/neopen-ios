@@ -1,10 +1,11 @@
 // Everything the app shows outside itself, kept up to date together: the widgets (widget.json in the App Group),
-// the alerts, and the Live Activities (countdown to the next appointment, tasks of today).
+// the alerts, and the Live Activity on the lock screen (coming appointments with a countdown, tasks of today).
 // Called when the agenda changes, when the app comes back on screen, after the pen wrote something, when settings or
 // the look change. Ticks made on the widget (toggles.json) are applied to the vault first.
 import { AppState } from "react-native";
 import NeoPenBle from "../../modules/neopen-ble";
 import { ReminderEvent } from "../core/reminders";
+import { comingEvents, todayTasks, uniqueEvents } from "../core/lockCard";
 import { VaultTask, ymd } from "../core/tasks";
 import { drawings } from "../ui/theme/drawings";
 import { T, theme } from "../ui/theme/theme";
@@ -16,7 +17,6 @@ const hm = (d: Date) => `${String(d.getHours()).padStart(2, "0")}:${String(d.get
 
 let timer: ReturnType<typeof setTimeout> | null = null;
 let running: Promise<void> = Promise.resolve();
-const live: { event?: { id: string; ref: string }; tasks?: { id: string } } = {};
 
 function look() {
   const pick = (id: string) => drawings.get(id)?.strokes;
@@ -30,7 +30,7 @@ function look() {
     red: T.red,
     hand: T.hand,
     profile: drawings.get("rule")?.profile ?? null,
-    drawings: Object.fromEntries(["check.empty", "check.done", "today", "dot"].map((id) => [id, pick(id)]).filter(([, v]) => v)),
+    drawings: Object.fromEntries(["check.empty", "check.done", "today", "dot", "nav.prev", "nav.next", "log", "tab.calendar"].map((id) => [id, pick(id)]).filter(([, v]) => v)),
   };
 }
 
@@ -67,7 +67,7 @@ function writeWidgets(tasks: VaultTask[], events: CalEvent[]): void {
   const data = {
     updated: Date.now(),
     look: look(),
-    events: events.map((e) => ({
+    events: uniqueEvents(events).map((e) => ({
       key: eventKey(e),
       title: e.title.replace(/^\s*✓\s*/, ""),
       start: e.start.getTime(),
@@ -76,6 +76,8 @@ function writeWidgets(tasks: VaultTask[], events: CalEvent[]): void {
       color: e.color,
       done: /^\s*✓/.test(e.title),
     })),
+    // days with something to do, for the dots of the month (also months away)
+    taskDays: [...new Set(tasks.filter((t) => !t.done && t.date).map((t) => t.date as string))].sort(),
     tasks: wanted.slice(0, 200).map((t) => ({ key: taskKey(t), title: t.title, date: t.date, time: t.time, done: t.done, priority: t.priority })),
   };
   NeoPenBle.writeShared("widget.json", JSON.stringify(data));
@@ -86,87 +88,51 @@ function baseState() {
   return { paper: T.paper, ink: T.ink, soft: T.inkSoft, accent: T.accent, hand: T.hand };
 }
 
-/** The next appointment (event or task with a time) within 8 hours, or null. */
-function nextAppointment(tasks: VaultTask[], events: CalEvent[]) {
-  const now = Date.now();
-  const soon = now + 8 * 3_600_000;
-  const list: { ref: string; title: string; start: number; end: number; color: string; subtitle: string }[] = [];
-  for (const e of events) {
-    if (e.allDay || /^\s*✓/.test(e.title) || e.end.getTime() <= now || e.start.getTime() > soon) continue;
-    list.push({ ref: eventKey(e), title: e.title, start: e.start.getTime(), end: e.end.getTime(), color: e.color, subtitle: `${hm(e.start)}–${hm(e.end)}${e.location ? ` · ${e.location}` : ""}` });
-  }
-  for (const t of tasks) {
-    if (t.done || !t.time || !t.date) continue;
-    const [y, m, d] = t.date.split("-").map(Number);
-    const [h, mi] = t.time.split(":").map(Number);
-    const start = new Date(y, m - 1, d, h, mi).getTime();
-    const [eh, emi] = (t.end ?? "").split(":").map(Number);
-    const end = t.end ? new Date(y, m - 1, d, eh, emi).getTime() : start + 30 * 60_000;
-    if (end <= now || start > soon) continue;
-    list.push({ ref: taskKey(t), title: t.title, start, end, color: T.accent, subtitle: t.end ? `${t.time}–${t.end}` : `alle ${t.time}` });
-  }
-  return list.sort((a, b) => a.start - b.start)[0] ?? null;
-}
-
 async function updateLive(tasks: VaultTask[], events: CalEvent[], onScreen: boolean): Promise<void> {
   if (!NeoPenBle.liveEnabled()) return;
   const s = alerts.get();
   const existing = NeoPenBle.liveList();
-  // ---- countdown
-  const next = s.countdown ? nextAppointment(tasks, events) : null;
-  const ev = existing.find((x) => x.kind === "event");
-  if (!next) {
-    if (ev) await NeoPenBle.liveEnd(ev.id, 0);
-    live.event = undefined;
-  } else {
-    const state = { kind: "event", title: next.title, subtitle: next.subtitle, start: next.start, end: next.end, color: next.color, items: [], more: 0, done: 0, total: 0, ...baseState() };
-    const json = JSON.stringify(state);
-    if (ev && live.event?.ref === next.ref) await NeoPenBle.liveUpdate(ev.id, json, next.start);
-    else if (ev && !onScreen) await NeoPenBle.liveUpdate(ev.id, json, next.start);
-    else if (onScreen) {
-      if (ev) await NeoPenBle.liveEnd(ev.id, 0);
-      const id = await NeoPenBle.liveStart("event", json, next.start);
-      if (!id.startsWith("errore")) live.event = { id, ref: next.ref };
-    }
-  }
-  // ---- tasks of today
-  const tk = existing.find((x) => x.kind === "tasks");
-  if (!s.todayCard) {
-    if (tk) await NeoPenBle.liveEnd(tk.id, 0);
+  // the two separate ones of the previous version: replaced by the single card
+  for (const a of existing) if (a.kind !== "today") await NeoPenBle.liveEnd(a.id, 0);
+  const cur = existing.find((x) => x.kind === "today");
+
+  const evs = s.countdown ? comingEvents(events).slice(0, 5) : [];
+  const t = s.todayCard ? todayTasks(tasks) : { open: [], done: 0, total: 0 };
+  if (!evs.length && !t.open.length) {
+    if (cur) await NeoPenBle.liveEnd(cur.id, 0);
     return;
   }
-  const today = ymd(new Date());
-  const todays = tasks.filter((t) => t.date && (t.date === today || (!t.done && t.date < today)));
-  const open = todays.filter((t) => !t.done).sort((a, b) => (a.time ?? "99").localeCompare(b.time ?? "99"));
-  const done = todays.filter((t) => t.done);
-  const shown = [...open, ...done].slice(0, 5);
+  const subtitle = s.todayCard && t.total ? `${t.done} di ${t.total} fatte` : evs.length === 1 ? "1 impegno" : `${evs.length} impegni`;
+  const now = Date.now();
   const state = {
-    kind: "tasks",
+    kind: "today",
     title: "Oggi",
-    subtitle: open.length ? `${done.length} di ${todays.length} fatte` : todays.length ? "tutto fatto" : "niente da fare",
-    start: Date.now(),
-    end: Date.now(),
+    subtitle,
+    start: now,
+    end: now,
     color: T.accent,
-    items: shown.map((t) => ({ title: t.title, time: t.time ?? "", done: t.done })),
-    more: Math.max(0, todays.length - shown.length),
-    done: done.length,
-    total: todays.length,
+    items: t.open.slice(0, 5).map((x) => ({ title: x.title, time: x.time ?? "", done: false })),
+    events: evs,
+    more: Math.max(0, t.open.length - 5),
+    done: t.done,
+    total: t.total,
     ...baseState(),
   };
+  // when the next appointment starts or ends, iOS redraws the card
+  const stale = evs.map((e) => (e.start > now ? e.start : e.end)).filter((x) => x > now).sort((a, b) => a - b)[0] ?? 0;
   const json = JSON.stringify(state);
-  if (tk) await NeoPenBle.liveUpdate(tk.id, json, 0);
-  else if (onScreen && todays.length) {
-    const id = await NeoPenBle.liveStart("tasks", json, 0);
-    if (!id.startsWith("errore")) live.tasks = { id };
-  }
+  if (cur) await NeoPenBle.liveUpdate(cur.id, json, stale);
+  else if (onScreen) await NeoPenBle.liveStart("today", json, stale);
 }
 
 async function run(onScreen: boolean): Promise<void> {
   let tasks = await agenda.freshTasks();
   if (await applyWidgetToggles(tasks)) tasks = await agenda.freshTasks();
-  const from = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-  const to = new Date(Math.max(new Date(from.getFullYear(), from.getMonth() + 1, 1).getTime(), Date.now() + 9 * 86_400_000));
-  const events = await agenda.eventsBetween(new Date(Math.min(from.getTime(), Date.now() - 86_400_000)), to);
+  // last month, this one and the next (the widget's month can be moved with the arrows)
+  const n = new Date();
+  const from = new Date(n.getFullYear(), n.getMonth() - 1, 1);
+  const to = new Date(Math.max(new Date(n.getFullYear(), n.getMonth() + 2, 1).getTime(), Date.now() + 9 * 86_400_000));
+  const events = await agenda.eventsBetween(from, to);
   try {
     writeWidgets(tasks, events);
   } catch {

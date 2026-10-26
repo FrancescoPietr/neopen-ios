@@ -17,7 +17,7 @@ struct WLook: Codable {
   var hand: Bool
   /// Your drawn line (how it leaves the straight line, see the app's core/drawing.ts).
   var profile: [Double]?
-  /// Your drawings (strokes in a 100 × 100 box) for: check.empty, check.done, today, dot.
+  /// Your drawings (strokes in a 100 × 100 box) for: check.empty, check.done, today, dot, nav.prev, nav.next, log, tab.calendar.
   var drawings: [String: [[[Double]]]]?
 }
 
@@ -52,6 +52,31 @@ struct WData: Codable {
   var look: WLook
   var events: [WEvent]
   var tasks: [WTask]
+  /// Days (YYYY-MM-DD) with something still to do, also months away: the dots of the month.
+  var taskDays: [String]?
+}
+
+/// What you chose on the widget itself: the month shown (arrows) and, for each size of the Agenda widget,
+/// whether it shows the month (like Fantastical) or the list of today.
+struct WState: Codable {
+  var list: [String: Bool] = [:]
+  var offset: Int = 0
+  var day: String = ""
+
+  static func load() -> WState {
+    guard let url = SharedFiles.dir?.appendingPathComponent("widgetstate.json"), let data = try? Data(contentsOf: url),
+      let s = try? JSONDecoder().decode(WState.self, from: data)
+    else { return WState() }
+    return s
+  }
+
+  func save() {
+    guard let url = SharedFiles.dir?.appendingPathComponent("widgetstate.json"), let data = try? JSONEncoder().encode(self) else { return }
+    try? data.write(to: url, options: .atomic)
+  }
+
+  /// Months away from this one; the next day it is back on this month.
+  func monthOffset(now: Date) -> Int { day == ymd(now) ? offset : 0 }
 }
 
 enum SharedFiles {
@@ -91,6 +116,7 @@ func hm(_ d: Date) -> String {
 
 let weekdaysShort = ["dom", "lun", "mar", "mer", "gio", "ven", "sab"]
 let weekdaysLong = ["domenica", "lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato"]
+let monthsShort = ["gen", "feb", "mar", "apr", "mag", "giu", "lug", "ago", "set", "ott", "nov", "dic"]
 let monthsLong = ["gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno", "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"]
 
 extension Date {
@@ -168,7 +194,7 @@ extension WData {
   }
 
   func busy(_ day: String) -> Bool {
-    events.contains { ymd($0.startDate) == day } || tasks.contains { $0.date == day && !$0.done }
+    events.contains { ymd($0.startDate) == day } || tasks.contains { $0.date == day && !$0.done } || (taskDays?.contains(day) ?? false)
   }
 }
 
@@ -195,7 +221,8 @@ extension WData {
         WTask(key: "a", title: "completare l'app", date: today, time: nil, done: false, priority: 4),
         WTask(key: "b", title: "chiamare Marco", date: today, time: "15:00", done: false, priority: 2),
         WTask(key: "c", title: "fare la spesa", date: today, time: nil, done: true, priority: 4),
-      ]
+      ],
+      taskDays: nil
     )
   }
 }
