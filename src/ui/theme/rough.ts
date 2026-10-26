@@ -96,17 +96,61 @@ export function roughLine(x1: number, y1: number, x2: number, y2: number, seed: 
   return smooth(wobble([a, b], seed, amp, Math.max(8, len / 12)));
 }
 
+/** Your own drawn line stretched between two points (its waves scaled to at most ~2.5 px), varied by the seed. */
+export function profileLine(x1: number, y1: number, x2: number, y2: number, profile: number[], seed: string): string {
+  const r = rng(seed + "p");
+  const len = Math.hypot(x2 - x1, y2 - y1) || 1;
+  const ux = (x2 - x1) / len;
+  const uy = (y2 - y1) / len;
+  const flip = r() < 0.5 ? -1 : 1;
+  const rev = r() < 0.5;
+  const prof = rev ? [...profile].reverse() : profile;
+  const scale = Math.min(len, 90);
+  const over = (r() - 0.3) * 2;
+  const pts: Pt[] = prof.map((d, i) => {
+    const t = i / (prof.length - 1);
+    const along = -over + t * (len + 2 * over);
+    const off = d * scale * flip;
+    return [x1 + ux * along - uy * off, y1 + uy * along + ux * off];
+  });
+  return smooth(pts);
+}
+
+/** A pen stroke as it was written: straight pieces between its (many) points, no smoothing that would round corners. */
+function polyline(p: Pt[]): string {
+  if (p.length === 1) return `M${f(p[0][0])} ${f(p[0][1])}l0.01 0`;
+  return `M${f(p[0][0])} ${f(p[0][1])}` + p.slice(1).map(([x, y]) => `L${f(x)} ${f(y)}`).join("");
+}
+
+/** Strokes drawn with the pen (100 × 100 box) at `size`: as they are, no added wobble. */
+export function drawnPath(strokes: Stroke[], size: number): string {
+  const s = size / 100;
+  return strokes.map((st) => polyline(st.map(([x, y]) => [x * s, y * s] as Pt))).join("");
+}
+
+/** The same strokes stretched into a box w × h (for the circle of today, the check box). */
+export function drawnPathIn(strokes: Stroke[], w: number, h: number, pad = 2): string {
+  const flat = strokes.flat();
+  if (!flat.length) return "";
+  const xs = flat.map((p) => p[0]);
+  const ys = flat.map((p) => p[1]);
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  const kx = (w - 2 * pad) / Math.max(1, x1 - x0);
+  const ky = (h - 2 * pad) / Math.max(1, y1 - y0);
+  return strokes
+    .map((st) => {
+      return polyline(st.map(([x, y]) => [pad + (x - x0) * kx, pad + (y - y0) * ky] as Pt));
+    })
+    .join("");
+}
+
 /** A box drawn with four strokes; corners slightly crossed, like a quick sketch. */
-export function roughRect(w: number, h: number, seed: string, inset = 2, amp = 1.2): string {
+export function roughRect(w: number, h: number, seed: string, inset = 2, amp = 1.2, profile?: number[]): string {
   const r = rng(seed + "r");
   const j = () => (r() - 0.5) * 2.4;
   const x0 = inset, y0 = inset, x1 = w - inset, y1 = h - inset;
-  return [
-    roughLine(x0 + j(), y0 + j(), x1 + j(), y0 + j(), seed + "t", amp),
-    roughLine(x1 + j(), y0 + j(), x1 + j(), y1 + j(), seed + "d", amp),
-    roughLine(x1 + j(), y1 + j(), x0 + j(), y1 + j(), seed + "b", amp),
-    roughLine(x0 + j(), y1 + j(), x0 + j(), y0 + j(), seed + "s", amp),
-  ].join("");
+  const ln = (a: number, b: number, c: number, d: number, k: string) => (profile?.length ? profileLine(a, b, c, d, profile, seed + k) : roughLine(a, b, c, d, seed + k, amp));
+  return [ln(x0 + j(), y0 + j(), x1 + j(), y0 + j(), "t"), ln(x1 + j(), y0 + j(), x1 + j(), y1 + j(), "d"), ln(x1 + j(), y1 + j(), x0 + j(), y1 + j(), "b"), ln(x0 + j(), y1 + j(), x0 + j(), y0 + j(), "s")].join("");
 }
 
 /** A circle drawn in one go: it starts somewhere, goes round and overlaps its start a little. */

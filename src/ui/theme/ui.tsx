@@ -4,8 +4,15 @@ import { createContext, ReactNode, useContext, useMemo, useRef, useState } from 
 import { LayoutChangeEvent, Pressable, StyleProp, StyleSheet, Text as RNText, TextInput as RNTextInput, TextInputProps, TextProps, TextStyle, View, ViewStyle } from "react-native";
 import Svg, { Circle, Defs, Line, Path, Pattern, Rect } from "react-native-svg";
 import { ELEMENT } from "./catalog";
-import { roughBlob, roughCircle, roughLine, roughRect, strokesPath } from "./rough";
-import { T } from "./theme";
+import { drawings } from "./drawings";
+import { drawnPath, drawnPathIn, profileLine, roughBlob, roughCircle, roughLine, roughRect, strokesPath } from "./rough";
+import { T, theme } from "./theme";
+
+/** A hand line between two points: yours (drawn with the pen) if there is one, else the app's. */
+function line(x1: number, y1: number, x2: number, y2: number, seed: string, amp: number): string {
+  const prof = drawings.get("rule")?.profile;
+  return prof?.length ? profileLine(x1, y1, x2, y2, prof, seed) : roughLine(x1, y1, x2, y2, seed, amp);
+}
 
 // ---------------------------------------------------------------- texts
 
@@ -79,7 +86,12 @@ const strokeW = (size: number) => Math.max(1.5, size * 0.075);
 /** An element of the catalogue (icons, arrows…), hand-drawn. */
 export function Glyph({ name, size = 22, color, weight = 1, style }: { name: string; size?: number; color?: string; weight?: number; style?: StyleProp<ViewStyle> }) {
   const el = ELEMENT.get(name);
-  const d = useMemo(() => (el ? strokesPath(el.strokes, name, size) : ""), [name, size, el]);
+  const v = theme.version;
+  const d = useMemo(() => {
+    const drawn = drawings.get(name);
+    if (drawn?.strokes.length) return drawnPath(drawn.strokes, size);
+    return el ? strokesPath(el.strokes, name, size) : "";
+  }, [name, size, el, v]);
   if (!el || !d) return null;
   const sw = strokeW(size) * weight;
   return (
@@ -95,7 +107,7 @@ export function Glyph({ name, size = 22, color, weight = 1, style }: { name: str
 export function HandLine({ color, weight = 1, style, seed }: { color?: string; weight?: number; style?: StyleProp<ViewStyle>; seed?: string }) {
   const [size, onLayout] = useSize();
   const s = useSeed(seed);
-  const d = useMemo(() => (size.w ? roughLine(1, 3, size.w - 1, 3, s, Math.min(1.4, size.w / 160)) : ""), [size.w, s]);
+  const d = useMemo(() => (size.w ? line(1, 3, size.w - 1, 3, s, Math.min(1.4, size.w / 160)) : ""), [size.w, s, theme.version]);
   return (
     <View style={[{ height: 6 }, style]} onLayout={onLayout} pointerEvents="none">
       {d ? (
@@ -111,7 +123,7 @@ export function HandLine({ color, weight = 1, style, seed }: { color?: string; w
 export function HandBar({ color, style }: { color: string; style?: StyleProp<ViewStyle> }) {
   const [size, onLayout] = useSize();
   const s = useSeed();
-  const d = useMemo(() => (size.h ? roughLine(3, 2, 3, size.h - 2, s, 0.7) : ""), [size.h, s]);
+  const d = useMemo(() => (size.h ? line(3, 2, 3, size.h - 2, s, 0.7) : ""), [size.h, s, theme.version]);
   return (
     <View style={[{ width: 6, alignSelf: "stretch" }, style]} onLayout={onLayout} pointerEvents="none">
       {d ? (
@@ -132,7 +144,10 @@ export function RowLine({ left = 16 }: { left?: number }) {
 export function HandFrame({ children, style, color, fill, weight = 1, seed }: { children?: ReactNode; style?: StyleProp<ViewStyle>; color?: string; fill?: string; weight?: number; seed?: string }) {
   const [size, onLayout] = useSize();
   const s = useSeed(seed);
-  const d = useMemo(() => (size.w ? roughRect(size.w, size.h, s, 2, Math.min(1.5, Math.max(0.6, size.w / 200))) : ""), [size.w, size.h, s]);
+  const d = useMemo(
+    () => (size.w ? roughRect(size.w, size.h, s, 2, Math.min(1.5, Math.max(0.6, size.w / 200)), drawings.get("rule")?.profile) : ""),
+    [size.w, size.h, s, theme.version]
+  );
   return (
     <View style={[style, { backgroundColor: undefined }]} onLayout={onLayout}>
       {fill ? <View style={[StyleSheet.absoluteFill, { backgroundColor: fill, margin: 3, borderRadius: 4 }]} pointerEvents="none" /> : null}
@@ -149,8 +164,14 @@ export function HandFrame({ children, style, color, fill, weight = 1, seed }: { 
 /** The check box of a task: a circle drawn with the pen; ticked = a tick that goes past the circle. */
 export function HandCheck({ done, color, size = 24, onPress }: { done: boolean; color: string; size?: number; onPress?: () => void }) {
   const s = useSeed();
-  const circle = useMemo(() => roughCircle(size / 2, size / 2, size / 2 - 3, size / 2 - 3, s, 0.07), [size, s]);
-  const tick = useMemo(() => strokesPath(ELEMENT.get("check.done")!.strokes, "tick" + s, size), [size, s]);
+  const circle = useMemo(() => {
+    const drawn = drawings.get("check.empty");
+    return drawn?.strokes.length ? drawnPathIn(drawn.strokes, size, size, 1.5) : roughCircle(size / 2, size / 2, size / 2 - 3, size / 2 - 3, s, 0.07);
+  }, [size, s, theme.version]);
+  const tick = useMemo(() => {
+    const drawn = drawings.get("check.done");
+    return drawn?.strokes.length ? drawnPath(drawn.strokes, size) : strokesPath(ELEMENT.get("check.done")!.strokes, "tick" + s, size);
+  }, [size, s, theme.version]);
   return (
     <Pressable onPress={onPress} hitSlop={10} style={{ width: size, height: size }}>
       <Svg width={size + 6} height={size + 6} viewBox={`-3 -3 ${size + 6} ${size + 6}`} style={{ position: "absolute", left: -3, top: -3 }}>
@@ -164,7 +185,10 @@ export function HandCheck({ done, color, size = 24, onPress }: { done: boolean; 
 /** A circle drawn around something (the number of today). */
 export function HandRing({ size, color, weight = 1 }: { size: number; color?: string; weight?: number }) {
   const s = useSeed();
-  const d = useMemo(() => roughCircle(size / 2, size / 2, size / 2 - 3, size / 2 - 4, s, 0.06, 0.5), [size, s]);
+  const d = useMemo(() => {
+    const drawn = drawings.get("today");
+    return drawn?.strokes.length ? drawnPathIn(drawn.strokes, size, size, 2) : roughCircle(size / 2, size / 2, size / 2 - 3, size / 2 - 4, s, 0.06, 0.5);
+  }, [size, s, theme.version]);
   return (
     <Svg width={size} height={size} style={{ position: "absolute" }} pointerEvents="none">
       <Path d={d} stroke={color ?? T.accent} strokeWidth={2.2 * weight} strokeLinecap="round" fill="none" />
@@ -175,10 +199,18 @@ export function HandRing({ size, color, weight = 1 }: { size: number; color?: st
 /** A small blob of ink (the dot of a busy day). */
 export function Dot({ size = 7, color }: { size?: number; color?: string }) {
   const s = useSeed();
-  const d = useMemo(() => roughBlob(size / 2 + 1, size / 2 + 1, size / 2, s, 0.12), [size, s]);
+  const drawn = drawings.get("dot");
+  const d = useMemo(
+    () => (drawn?.strokes.length ? drawnPathIn(drawn.strokes, size + 2, size + 2, size / 3 + 1) : roughBlob(size / 2 + 1, size / 2 + 1, size / 2, s, 0.12)),
+    [size, s, theme.version]
+  );
   return (
     <Svg width={size + 2} height={size + 2} pointerEvents="none">
-      <Path d={d} fill={color ?? T.ink} />
+      {drawn?.strokes.length ? (
+        <Path d={d} stroke={color ?? T.ink} strokeWidth={(size * 2) / 3} strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      ) : (
+        <Path d={d} fill={color ?? T.ink} />
+      )}
     </Svg>
   );
 }
@@ -204,7 +236,7 @@ export function HandSwitch({ value, onChange }: { value: boolean; onChange: (v: 
 export function NowMark({ color }: { color?: string }) {
   const [size, onLayout] = useSize();
   const s = useSeed();
-  const d = useMemo(() => (size.w ? roughLine(8, 5, size.w - 2, 5, s, 0.8) : ""), [size.w, s]);
+  const d = useMemo(() => (size.w ? line(8, 5, size.w - 2, 5, s, 0.8) : ""), [size.w, s, theme.version]);
   const blob = useMemo(() => roughBlob(5, 5, 4, s), [s]);
   return (
     <View style={{ height: 10, flex: 1 }} onLayout={onLayout} pointerEvents="none">

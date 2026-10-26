@@ -4,7 +4,11 @@ import { useState, useSyncExternalStore } from "react";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { CATALOG, Group } from "./theme/catalog";
 import { PRESETS, SWATCHES, isHex, makePalette } from "./theme/colors";
-import { FontChoice, Pattern, T, theme, themed } from "./theme/theme";
+import * as Clipboard from "expo-clipboard";
+import NeoPenBle from "../../modules/neopen-ble";
+import { DrawScreen } from "./draw";
+import { drawings } from "./theme/drawings";
+import { DrawingsChoice, FontChoice, Pattern, T, theme, themed } from "./theme/theme";
 import { Dot, Glyph, HandCheck, HandFrame, HandRing, RowLine, Text, TextInput } from "./theme/ui";
 
 const useLook = () => useSyncExternalStore(theme.subscribe, () => theme.version);
@@ -85,6 +89,15 @@ function PresetCard({ id, name, paper, ink, accent, on }: { id: string; name: st
 
 export function LookScreen() {
   useLook();
+  const [drawing, setDrawing] = useState<string[] | null>(null);
+  const [exported, setExported] = useState("");
+  if (drawing?.length) return <DrawScreen ids={drawing} onClose={() => setDrawing(null)} />;
+  const exportMine = async () => {
+    const json = drawings.exportMine();
+    await Clipboard.setStringAsync(json);
+    const err = NeoPenBle.vaultFolderName() ? NeoPenBle.writeVaultFile("NeoPen/disegni.json", json) : "nessun vault";
+    setExported(err ? "Copiati negli appunti." : "Copiati negli appunti e salvati nel vault in NeoPen/disegni.json.");
+  };
   const look = theme.look;
   const groups = [...new Set(CATALOG.map((e) => e.group))] as Group[];
   return (
@@ -136,7 +149,7 @@ export function LookScreen() {
         ]}
       />
 
-      <Title hint="«La mia calligrafia» è il font fatto a mano. Al passo successivo ognuno potrà scrivere il suo con la penna.">Carattere</Title>
+      <Title hint="«La mia calligrafia» è il font fatto a mano.">Carattere</Title>
       <Choice<FontChoice>
         value={look.font}
         onChange={(v) => theme.set({ font: v })}
@@ -161,22 +174,46 @@ export function LookScreen() {
         </Pressable>
       </View>
 
-      <Title hint="Tutti i disegni dell'app. Per ora sono provvisori: al prossimo passo li potrai ridisegnare uno per uno con la penna.">Disegni</Title>
+      <Title hint="Le icone e i segni dell'app. Tocca un disegno per rifarlo con la penna: diventa uno dei «miei disegni».">Disegni</Title>
+      <Choice<DrawingsChoice>
+        value={look.drawings}
+        onChange={(v) => theme.set({ drawings: v })}
+        options={[
+          { value: "standard", label: "Standard" },
+          { value: "mine", label: `I miei (${drawings.countMine()})` },
+        ]}
+      />
       {groups.map((g) => (
         <View key={g}>
           <Text style={st.group}>{g}</Text>
           <View style={st.glyphs}>
             {CATALOG.filter((e) => e.group === g).map((e) => (
-              <View key={e.id} style={st.glyphCell}>
-                {e.strokes.length ? <Glyph name={e.id} size={30} /> : <Text style={st.auto}>auto</Text>}
+              <Pressable key={e.id} style={({ pressed }) => [st.glyphCell, pressed && { backgroundColor: T.line }]} onPress={() => setDrawing([e.id])}>
+                <Glyph name={e.id} size={30} />
                 <Text style={st.glyphLabel} numberOfLines={2}>
                   {e.label}
                 </Text>
-              </View>
+                {drawings.mine(e.id) ? <Text style={st.mineMark}>mio</Text> : null}
+              </Pressable>
             ))}
           </View>
         </View>
       ))}
+      <View style={[st.choices, { marginTop: 12 }]}>
+        <Pressable onPress={() => setDrawing(CATALOG.filter((e) => !drawings.mine(e.id)).map((e) => e.id))}>
+          <HandFrame style={st.choice} color={T.accent} fill={T.accent + "26"} seed="tutti">
+            <Text style={[st.choiceText, { color: T.accent, fontWeight: "700" }]}>Disegna con la penna quelli che mancano</Text>
+          </HandFrame>
+        </Pressable>
+        {drawings.countMine() ? (
+          <Pressable onPress={exportMine}>
+            <HandFrame style={st.choice} seed="esporta">
+              <Text style={st.choiceText}>Esporta i miei disegni</Text>
+            </HandFrame>
+          </Pressable>
+        ) : null}
+      </View>
+      {exported ? <Text style={[st.hint, { paddingHorizontal: 16, paddingTop: 6 }]}>{exported}</Text> : null}
 
       <Pressable onPress={() => theme.reset()} style={{ marginTop: 26, marginHorizontal: 16 }}>
         <HandFrame style={st.reset} color={T.accent} seed="reset">
@@ -218,7 +255,7 @@ const st = themed(() =>
     glyphs: { flexDirection: "row", flexWrap: "wrap", paddingHorizontal: 8 },
     glyphCell: { width: "25%", alignItems: "center", paddingVertical: 8, gap: 4 },
     glyphLabel: { fontSize: 11, color: T.inkSoft, textAlign: "center", paddingHorizontal: 2 },
-    auto: { fontSize: 13, color: T.faint, height: 30, textAlignVertical: "center", paddingTop: 6 },
+    mineMark: { fontSize: 11, color: T.accent },
     reset: { paddingVertical: 12, alignItems: "center" },
   })
 );

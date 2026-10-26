@@ -50,9 +50,8 @@ export const CATALOG: Element[] = [
   { id: "completed", group: "Attività", label: "Completate", strokes: [circle(50, 50, 38), [[30, 52], [45, 67], [72, 34]]] },
 
   // calendar
-  { id: "today", group: "Calendario", label: "Cerchio di «oggi»", strokes: [] },
-  { id: "dot", group: "Calendario", label: "Pallino di un impegno", strokes: [] },
-  { id: "now", group: "Calendario", label: "Linea di «adesso»", strokes: [] },
+  { id: "today", group: "Calendario", label: "Cerchio di «oggi»", strokes: [circle(50, 50, 40, 36)] },
+  { id: "dot", group: "Calendario", label: "Pallino", strokes: [[[46, 48], [54, 50], [50, 54], [47, 51]]] },
 
   // pen
   { id: "pen", group: "Penna", label: "Penna", strokes: pen },
@@ -71,11 +70,8 @@ export const CATALOG: Element[] = [
   { id: "log", group: "Penna", label: "Registro", strokes: [dot(16, 24), line(30, 24, 86, 24), dot(16, 50), line(30, 50, 78, 50), dot(16, 76), line(30, 76, 84, 76)] },
   { id: "palette", group: "Penna", label: "Aspetto (tavolozza)", strokes: [circle(50, 50, 38, 34), circle(64, 66, 8), dot(32, 40), dot(52, 28), dot(72, 40), dot(30, 60)] },
 
-  // outlines (drawn by the app from your stroke; you will draw one sample of each)
-  { id: "rule", group: "Contorni", label: "Linea di separazione", strokes: [] },
-  { id: "frame", group: "Contorni", label: "Riquadro", strokes: [] },
-  { id: "button", group: "Contorni", label: "Pulsante", strokes: [] },
-  { id: "switch", group: "Contorni", label: "Interruttore", strokes: [] },
+  // outlines: one line drawn by you gives its character to all lines, boxes and buttons of the app
+  { id: "rule", group: "Contorni", label: "Una linea dritta (righe, riquadri, pulsanti)", strokes: [line(6, 50, 94, 50)] },
 
   // symbols missing from the font
   { id: "sym.middot", group: "Simboli", label: "Puntino (·)", strokes: [dot(50, 50)] },

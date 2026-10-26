@@ -6,6 +6,7 @@ import { ColorChoice, Palette, PRESETS, STANDARD, makePalette } from "./colors";
 
 export type Pattern = "puntini" | "righe" | "quadretti" | "liscio";
 export type FontChoice = "mano" | "sistema";
+export type DrawingsChoice = "standard" | "mine";
 
 export interface Look extends ColorChoice {
   /** Preset the colors come from ("" = chosen by hand). */
@@ -14,9 +15,11 @@ export interface Look extends ColorChoice {
   font: FontChoice;
   /** Text size: 0.85 … 1.3. */
   textScale: number;
+  /** Drawings: the standard ones or yours (made with the pen). */
+  drawings: DrawingsChoice;
 }
 
-export const STANDARD_LOOK: Look = { preset: STANDARD.id, paper: STANDARD.paper, ink: STANDARD.ink, accent: STANDARD.accent, pattern: "puntini", font: "mano", textScale: 1 };
+export const STANDARD_LOOK: Look = { preset: STANDARD.id, paper: STANDARD.paper, ink: STANDARD.ink, accent: STANDARD.accent, pattern: "puntini", font: "mano", textScale: 1, drawings: "standard" };
 
 const FILE = "aspetto.json";
 
@@ -74,6 +77,11 @@ export const theme = {
     Object.assign(T, compute(look));
     version++;
     writeJson(FILE, look);
+    for (const fn of listeners) fn();
+  },
+  /** Something drawn changed (drawings): everything is drawn again. */
+  bump(): void {
+    version++;
     for (const fn of listeners) fn();
   },
   usePreset(id: string): void {
