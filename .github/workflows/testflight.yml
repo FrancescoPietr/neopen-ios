@@ -14,6 +14,8 @@ jobs:
     env:
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
       EXPO_NO_TELEMETRY: 1
+      # App Groups / Time Sensitive are switched on by hand in the Apple developer site (the API key can't do it)
+      EXPO_NO_CAPABILITY_SYNC: 1
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
