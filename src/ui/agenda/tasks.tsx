@@ -2,7 +2,7 @@
 // Filters (priority, without a date, added in the app, done, labels) in a menu.
 import { useState } from "react";
 import { Pressable, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
-import { Glyph, HandFrame, Text } from "../theme/ui";
+import { Glyph, HandFrame, SPACE, Text } from "../theme/ui";
 import { themed } from "../theme/theme";
 import { agenda, isAppTask } from "../../app/agenda";
 import { byDateTime, labels, overdue } from "../../core/taskStore";
@@ -138,19 +138,25 @@ export function TasksScreen({ onTask }: { onTask: (t: VaultTask) => void }) {
   return (
     <View style={{ flex: 1 }}>
       <View style={st.head}>
-        <Text style={st.title}>Attività</Text>
+        <Text style={st.title} numberOfLines={1}>
+          Attività
+        </Text>
         <Pressable onPress={() => setMenu(!menu)} hitSlop={10}>
           <HandFrame style={st.filterBtn} color={filter.kind === "all" ? C.line : C.accent} seed="filtro">
             <Glyph name="filter" size={16} color={filter.kind === "all" ? C.sub : C.accent} />
-            <Text style={[st.filterText, filter.kind !== "all" && { color: C.accent }]}>{filter.kind === "all" ? "Filtri" : filterName(filter)}</Text>
+            <Text style={[st.filterText, filter.kind !== "all" && { color: C.accent }]}>Filtri</Text>
           </HandFrame>
         </Pressable>
       </View>
       {filter.kind !== "all" ? (
-        <Pressable onPress={() => setFilter({ kind: "all" })} style={st.clear}>
-          <Glyph name="close" size={11} color={C.sub} />
-          <Text style={st.clearText}>togli il filtro</Text>
-        </Pressable>
+        <View style={st.activeRow}>
+          <Pressable onPress={() => setFilter({ kind: "all" })} hitSlop={6}>
+            <HandFrame style={st.activeChip} color={C.accent} fill={C.accent + "22"} seed="attivo">
+              <Text style={st.activeText}>{filterName(filter)}</Text>
+              <Glyph name="close" size={11} color={C.accent} weight={1.3} />
+            </HandFrame>
+          </Pressable>
+        </View>
       ) : null}
       <ScrollView refreshControl={<RefreshControl refreshing={a.loading} onRefresh={() => void agenda.refresh()} />} contentContainerStyle={{ paddingBottom: 140 }}>
         {filter.kind === "all" ? <Planned onTask={onTask} /> : list.length ? list.map((x) => <TaskRow key={x.id} task={x} showDate onPress={() => onTask(x)} />) : <Empty text="Nessuna attività." />}
@@ -170,13 +176,14 @@ export function TasksScreen({ onTask }: { onTask: (t: VaultTask) => void }) {
 }
 
 const st = themed(() => StyleSheet.create({
-  head: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: 8 },
-  title: { fontSize: 36, fontWeight: "700", color: C.text },
-  filterBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 6 },
-  filterText: { fontSize: 15, color: C.sub },
-  clear: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-end", paddingHorizontal: 18, paddingVertical: 2 },
-  clearText: { fontSize: 13, color: C.sub },
-  menu: { position: "absolute", top: 58, right: 12, width: 240, paddingVertical: 4 },
+  head: { flexDirection: "row", alignItems: "center", gap: SPACE.gap * 2, paddingHorizontal: SPACE.side, paddingTop: SPACE.gap, paddingBottom: SPACE.gap },
+  title: { flex: 1, fontSize: 36, fontWeight: "700", color: C.text },
+  filterBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 14, paddingVertical: 7 },
+  filterText: { fontSize: 16, color: C.sub },
+  activeRow: { flexDirection: "row", paddingHorizontal: SPACE.side, paddingBottom: SPACE.gap },
+  activeChip: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingVertical: 5 },
+  activeText: { fontSize: 15, color: C.accent },
+  menu: { position: "absolute", top: 62, right: SPACE.side, width: 240, paddingVertical: 4 },
   menuItem: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, paddingVertical: 10 },
   menuText: { flex: 1, fontSize: 16, color: C.text },
   menuCount: { fontSize: 14, color: C.sub },

@@ -1,7 +1,7 @@
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { AppState, Pressable, StyleSheet, View } from "react-native";
-import { Glyph, HandFrame, HandLine, Paper, Text } from "./src/ui/theme/ui";
+import { BackBar, Glyph, HandFrame, HandLine, Paper, Text } from "./src/ui/theme/ui";
 import { T, theme, themed } from "./src/ui/theme/theme";
 import { roughBlob } from "./src/ui/theme/rough";
 import Svg, { Path } from "react-native-svg";
@@ -81,17 +81,9 @@ export default function App() {
           {tab === "calendar" ? <CalendarScreen onTask={setTask} onEvent={setEvent} onDayChange={setDay} onAdd={() => setAdding(true)} /> : null}
           {tab === "pen" ? (
             <View style={{ flex: 1 }}>
-              {pen !== "home" ? (
-                <View style={styles.bar}>
-                  <Pressable onPress={() => setPen("home")} hitSlop={12} style={{ flexDirection: "row", alignItems: "center", gap: 4, width: 90 }}>
-                    <Glyph name="nav.back" size={18} color={C.accent} weight={1.2} />
-                    <Text style={styles.back}>Penna</Text>
-                  </Pressable>
-                  <Text style={styles.title}>{PEN_TITLES[pen]}</Text>
-                  <View style={{ width: 80 }} />
-                </View>
-              ) : null}
-              {pen === "home" ? <HomeScreen go={setPen} /> : pen === "settings" ? <SettingsScreen /> : pen === "look" ? <LookScreen /> : <LogScreen />}
+              {/* Aspetto has its own bar (inside it, the drawing screen goes back to Aspetto, not to Penna) */}
+              {pen !== "home" && pen !== "look" ? <BackBar label="Penna" onPress={() => setPen("home")} title={PEN_TITLES[pen]} /> : null}
+              {pen === "home" ? <HomeScreen go={setPen} /> : pen === "settings" ? <SettingsScreen /> : pen === "look" ? <LookScreen onBack={() => setPen("home")} /> : <LogScreen />}
             </View>
           ) : null}
         </View>

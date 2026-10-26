@@ -250,6 +250,25 @@ export function NowMark({ color }: { color?: string }) {
   );
 }
 
+// ---------------------------------------------------------------- layout
+
+/** Spacing used everywhere, so screens line up: side margin, small gap, gap between sections. */
+export const SPACE = { side: 16, gap: 8, section: 20 };
+
+/** The bar to go back, the same on every screen: "‹ Where you go back to" on the left, an optional title. */
+export function BackBar({ label, onPress, title, right }: { label: string; onPress: () => void; title?: string; right?: ReactNode }) {
+  return (
+    <View style={{ height: 44, flexDirection: "row", alignItems: "center", paddingHorizontal: SPACE.side }}>
+      <Pressable onPress={onPress} hitSlop={12} style={{ flexDirection: "row", alignItems: "center", gap: 4, flex: 1 }}>
+        <Glyph name="nav.back" size={18} color={T.accent} weight={1.2} />
+        <Text style={{ fontSize: 18, color: T.accent }}>{label}</Text>
+      </Pressable>
+      {title ? <Text style={{ fontSize: 19, fontWeight: "700", color: T.ink }}>{title}</Text> : null}
+      <View style={{ flex: 1, alignItems: "flex-end" }}>{right}</View>
+    </View>
+  );
+}
+
 // ---------------------------------------------------------------- paper
 
 /** The background of the screens: the paper color with its ruling (dots, lines, squares or nothing). */

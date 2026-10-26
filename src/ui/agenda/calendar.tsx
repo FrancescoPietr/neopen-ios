@@ -3,7 +3,7 @@
 // time, in order), then the tasks of the day. Swipe left/right to change month or day.
 import { useEffect, useRef, useState } from "react";
 import { GestureResponderEvent, Pressable, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
-import { Dot, Glyph, HandBar, HandFrame, HandLine, HandRing, NowMark, RowLine, Text } from "../theme/ui";
+import { BackBar, Dot, Glyph, HandBar, HandFrame, HandLine, HandRing, NowMark, RowLine, Text } from "../theme/ui";
 import { themed } from "../theme/theme";
 import { agenda, CalEvent, visibleEvents } from "../../app/agenda";
 import { onDay } from "../../core/taskStore";
@@ -236,20 +236,20 @@ function DayScreen({ day, onGo, onBack, onTask, onEvent }: { day: string; onGo: 
 
   return (
     <View style={{ flex: 1 }}>
-      <View style={st.dayNav}>
-        <Pressable onPress={onBack} hitSlop={12} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-          <Glyph name="nav.back" size={18} color={C.accent} weight={1.2} />
-          <Text style={st.back}>{cap(monthLong(d.getMonth()))}</Text>
-        </Pressable>
-        <View style={{ flexDirection: "row", gap: 22 }}>
-          <Pressable onPress={() => onGo(addDays(day, -1))} hitSlop={12}>
-            <Glyph name="nav.prev" size={22} color={C.accent} weight={1.2} />
-          </Pressable>
-          <Pressable onPress={() => onGo(addDays(day, 1))} hitSlop={12}>
-            <Glyph name="nav.next" size={22} color={C.accent} weight={1.2} />
-          </Pressable>
-        </View>
-      </View>
+      <BackBar
+        label={cap(monthLong(d.getMonth()))}
+        onPress={onBack}
+        right={
+          <View style={{ flexDirection: "row", gap: 22 }}>
+            <Pressable onPress={() => onGo(addDays(day, -1))} hitSlop={12}>
+              <Glyph name="nav.prev" size={22} color={C.accent} weight={1.2} />
+            </Pressable>
+            <Pressable onPress={() => onGo(addDays(day, 1))} hitSlop={12}>
+              <Glyph name="nav.next" size={22} color={C.accent} weight={1.2} />
+            </Pressable>
+          </View>
+        }
+      />
       <View style={st.dayHead}>
         <Text style={st.dayTitle}>
           {cap(WD_LONG[d.getDay()])} {d.getDate()}
@@ -345,7 +345,7 @@ const st = themed(() => StyleSheet.create({
   pvMore: { fontSize: 10, lineHeight: 13, color: C.sub },
   dayNav: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: 8 },
   back: { fontSize: 17, color: C.accent },
-  dayHead: { paddingHorizontal: 16, paddingTop: 6, paddingBottom: 6 },
+  dayHead: { paddingHorizontal: 16, paddingTop: 0, paddingBottom: 8 },
   dayTitle: { fontSize: 32, fontWeight: "700", color: C.text },
   daySub: { fontSize: 15, color: C.sub, marginTop: 2 },
   timed: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 11, paddingRight: 16 },

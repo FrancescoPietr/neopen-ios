@@ -11,7 +11,7 @@ import { ELEMENT } from "./theme/catalog";
 import { drawings } from "./theme/drawings";
 import { Pt, drawnPath, drawnPathIn, profileLine } from "./theme/rough";
 import { T, theme, themed } from "./theme/theme";
-import { Glyph, HandFrame, Text } from "./theme/ui";
+import { BackBar, Glyph, HandFrame, Text } from "./theme/ui";
 
 const keyOf = (page: string, t: number) => `${page}:${t}`;
 
@@ -119,18 +119,9 @@ export function DrawScreen({ ids, onClose }: { ids: string[]; onClose: () => voi
 
   if (!el) return null;
   return (
+    <View style={{ flex: 1 }}>
+    <BackBar label="Aspetto" onPress={onClose} right={ids.length > 1 ? <Text style={st.count}>{i + 1} di {ids.length}</Text> : undefined} />
     <ScrollView contentContainerStyle={{ paddingBottom: 60 }}>
-      <View style={st.top}>
-        <Pressable onPress={onClose} hitSlop={12} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-          <Glyph name="nav.back" size={18} color={T.accent} weight={1.2} />
-          <Text style={st.back}>Aspetto</Text>
-        </Pressable>
-        {ids.length > 1 ? (
-          <Text style={st.count}>
-            {i + 1} di {ids.length}
-          </Text>
-        ) : null}
-      </View>
       <Text style={st.ask}>Disegna:</Text>
       <Text style={st.what}>{el.label}</Text>
       <PenState />
@@ -142,7 +133,7 @@ export function DrawScreen({ ids, onClose }: { ids: string[]; onClose: () => voi
               <Path d={path} stroke={T.ink} strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round" fill="none" />
             </Svg>
           ) : (
-            <View style={{ alignItems: "center", gap: 8 }}>
+            <View style={{ alignItems: "center", gap: 8, paddingHorizontal: 18 }}>
               <Text style={st.wait}>Qui compare quello che disegni.</Text>
               <Text style={st.waitSmall}>Ora c'è questo:</Text>
               {mine?.strokes.length || el.strokes.length ? <Glyph name={id} size={70} color={T.faint} /> : null}
@@ -191,6 +182,7 @@ export function DrawScreen({ ids, onClose }: { ids: string[]; onClose: () => voi
         Consiglio: disegna grande (2–3 cm) e senza riempire. Se sbagli tocca «Rifai» e ridisegna accanto: conta solo quello che disegni dopo.
       </Text>
     </ScrollView>
+    </View>
   );
 }
 
@@ -199,11 +191,11 @@ const st = themed(() =>
     top: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 16, paddingTop: 8 },
     back: { fontSize: 18, color: T.accent },
     count: { fontSize: 15, color: T.inkSoft },
-    ask: { fontSize: 18, color: T.inkSoft, paddingHorizontal: 16, paddingTop: 14 },
+    ask: { fontSize: 18, color: T.inkSoft, paddingHorizontal: 16, paddingTop: 4 },
     what: { fontSize: 30, fontWeight: "700", color: T.ink, paddingHorizontal: 16 },
     state: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 16, paddingTop: 8 },
     stateText: { fontSize: 15, flex: 1 },
-    wait: { fontSize: 16, color: T.inkSoft },
+    wait: { fontSize: 16, color: T.inkSoft, textAlign: "center" },
     waitSmall: { fontSize: 13, color: T.faint },
     label: { fontSize: 15, color: T.inkSoft, paddingHorizontal: 16, paddingTop: 18, paddingBottom: 6 },
     inPlace: { flexDirection: "row", alignItems: "center", gap: 18, paddingHorizontal: 20 },

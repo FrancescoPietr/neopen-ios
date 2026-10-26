@@ -9,7 +9,7 @@ import NeoPenBle from "../../modules/neopen-ble";
 import { DrawScreen } from "./draw";
 import { drawings } from "./theme/drawings";
 import { DrawingsChoice, FontChoice, Pattern, T, theme, themed } from "./theme/theme";
-import { Dot, Glyph, HandCheck, HandFrame, HandRing, RowLine, Text, TextInput } from "./theme/ui";
+import { BackBar, Dot, Glyph, HandCheck, HandFrame, HandRing, RowLine, Text, TextInput } from "./theme/ui";
 
 const useLook = () => useSyncExternalStore(theme.subscribe, () => theme.version);
 
@@ -87,7 +87,7 @@ function PresetCard({ id, name, paper, ink, accent, on }: { id: string; name: st
   );
 }
 
-export function LookScreen() {
+export function LookScreen({ onBack }: { onBack: () => void }) {
   useLook();
   const [drawing, setDrawing] = useState<string[] | null>(null);
   const [exported, setExported] = useState("");
@@ -101,6 +101,8 @@ export function LookScreen() {
   const look = theme.look;
   const groups = [...new Set(CATALOG.map((e) => e.group))] as Group[];
   return (
+    <View style={{ flex: 1 }}>
+    <BackBar label="Penna" onPress={onBack} />
     <ScrollView contentContainerStyle={{ paddingBottom: 60 }}>
       <Text style={st.big}>Aspetto</Text>
 
@@ -222,6 +224,7 @@ export function LookScreen() {
       </Pressable>
       <RowLine left={16} />
     </ScrollView>
+    </View>
   );
 }
 
