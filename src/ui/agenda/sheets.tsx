@@ -3,9 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Alert, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { Dot, Glyph, HandFrame, Paper, RowLine, Text, TextInput } from "../theme/ui";
 import { themed } from "../theme/theme";
-import { agenda, CalEvent } from "../../app/agenda";
+import { agenda, CalEvent, isAppTask } from "../../app/agenda";
 import { parseQuickAdd } from "../../core/quickadd";
-import { projects } from "../../core/taskStore";
 import { Priority, VaultTask, addDays, nextOccurrence } from "../../core/tasks";
 import { C, Chip, PRIORITY_COLOR, dayLabel, hm, today, useAgenda } from "./common";
 
@@ -43,32 +42,28 @@ const Label = ({ children }: { children: string }) => <Text style={st.label}>{ch
 
 // ---------------------------------------------------------------- quick add
 
-export function QuickAddSheet({ visible, onClose, project, date }: { visible: boolean; onClose: () => void; project?: string | null; date?: string | null }) {
+export function QuickAddSheet({ visible, onClose, date }: { visible: boolean; onClose: () => void; date?: string | null }) {
   const a = useAgenda();
   const [text, setText] = useState("");
   const [kind, setKind] = useState<"task" | "event">("task");
-  const [proj, setProj] = useState<string | null>(project ?? null);
   const [calId, setCalId] = useState<string | null>(null);
   useEffect(() => {
     if (visible) {
       setText("");
       setKind("task");
-      setProj(project ?? null);
     }
-  }, [visible, project]);
+  }, [visible]);
   const q = useMemo(() => {
     const p = parseQuickAdd(text, today());
     if (!p.date && date) p.date = date;
     return p;
   }, [text, date]);
-  const projectList = useMemo(() => projects(a.tasks).filter((p) => p.own).map((p) => p.name), [a.tasks]);
   const writable = a.calendars.filter((c) => c.writable);
-  const target = q.project ?? proj ?? "Inbox";
   const canSave = q.title.length > 0 && (kind === "task" || !!q.date);
 
   const save = async () => {
     if (!canSave) return;
-    const ok = kind === "task" ? await agenda.addTask(q, target) : await agenda.addEvent(q, calId ?? writable[0]?.id ?? null);
+    const ok = kind === "task" ? await agenda.addTask(q) : await agenda.addEvent(q, calId ?? writable[0]?.id ?? null);
     if (ok) onClose();
   };
 
@@ -115,15 +110,7 @@ export function QuickAddSheet({ visible, onClose, project, date }: { visible: bo
       </View>
 
       {kind === "task" ? (
-        <>
-          <Label>Progetto</Label>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={st.chipRow}>
-            {[...new Set(["Inbox", ...projectList, ...(q.project ? [q.project] : [])])].map((p) => (
-              <Chip key={p} label={p} on={target === p} onPress={() => setProj(p)} />
-            ))}
-          </ScrollView>
-          <Text style={st.hint}>Scrivi +Nome per un progetto nuovo. Le attività stanno nel vault: Attività/{target}.md</Text>
-        </>
+        <Text style={st.hint}>Le attività aggiunte qui restano nell'app (non diventano note di Obsidian).</Text>
       ) : (
         <>
           <Label>Calendario</Label>
@@ -137,7 +124,7 @@ export function QuickAddSheet({ visible, onClose, project, date }: { visible: bo
         </>
       )}
       <Text style={st.hint}>
-        Capisce: oggi, domani, venerdì, 3 novembre, 17/10, tra 3 giorni · alle 15, dalle 9 alle 11, per 2 ore · ogni giorno/settimana/mese, ogni lunedì · p1–p4 · #etichetta · +Progetto
+        Capisce: oggi, domani, venerdì, 3 novembre, 17/10, tra 3 giorni · alle 15, dalle 9 alle 11, per 2 ore · ogni giorno/settimana/mese, ogni lunedì · p1–p4 · #etichetta
       </Text>
     </Sheet>
   );
@@ -182,7 +169,6 @@ export function TaskEditor({ task, onClose }: { task: VaultTask | null; onClose:
     setRecurrence(task.recurrence);
   }, [task]);
   if (!task) return null;
-  const projectList = projects(a.tasks).filter((p) => p.own).map((p) => p.name);
   const t = today();
   const okTime = (v: string) => (/^\d{1,2}:\d{2}$/.test(v.trim()) ? v.trim().padStart(5, "0") : null);
 
@@ -241,23 +227,18 @@ export function TaskEditor({ task, onClose }: { task: VaultTask | null; onClose:
       </View>
       {recurrence && date ? <Text style={st.hint}>Prossima volta dopo questa: {dayLabel(nextOccurrence(recurrence, date) ?? date)}</Text> : null}
 
-      <Label>{`Progetto · ${task.project}`}</Label>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={st.chipRow}>
-        {[...new Set(["Inbox", ...projectList])].filter((p) => p !== task.project).map((p) => (
-          <Chip key={p} label={`Sposta in ${p}`} onPress={() => void agenda.move(task, p).then(onClose)} />
-        ))}
-      </ScrollView>
-
       <HandFrame style={[st.card, { marginTop: 24 }]}>
-        <Pressable style={st.action} onPress={() => void Linking.openURL(agenda.obsidianLink(task.file))}>
-          <Text style={[st.actionText, { color: "#7C3AED" }]}>Apri la nota in Obsidian</Text>
-          <Text style={st.actionSub}>{task.file}</Text>
-          <RowLine />
-        </Pressable>
+        {isAppTask(task) ? null : (
+          <Pressable style={st.action} onPress={() => void Linking.openURL(agenda.obsidianLink(task.file))}>
+            <Text style={st.actionText}>Apri la nota in Obsidian</Text>
+            <Text style={st.actionSub}>{task.file}</Text>
+            <RowLine />
+          </Pressable>
+        )}
         <Pressable
           style={st.action}
           onPress={() =>
-            Alert.alert("Eliminare l'attività?", "La riga viene tolta dalla nota.", [
+            Alert.alert("Eliminare l'attività?", isAppTask(task) ? undefined : "La riga viene tolta dalla nota.", [
               { text: "Annulla", style: "cancel" },
               { text: "Elimina", style: "destructive", onPress: () => void agenda.remove(task).then(onClose) },
             ])

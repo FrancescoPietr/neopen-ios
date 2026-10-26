@@ -45,6 +45,28 @@ export function writeJson(name: string, value: unknown): void {
   f.writeSync(JSON.stringify(value));
 }
 
+/** Small text file in Documents (null if missing). */
+export function readText(name: string): string | null {
+  try {
+    const f = new File(Paths.document, name);
+    return f.exists ? f.textSync() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Writes a small text file in Documents. Returns "" or the error. */
+export function writeText(name: string, text: string): string {
+  try {
+    const f = new File(Paths.document, name);
+    if (!f.exists) f.create({ overwrite: true });
+    f.writeSync(text);
+    return "";
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+}
+
 /** Log file Documents/registro.txt (shareable from the app); kept under ~1 MB. */
 export class LogFile {
   readonly file = new File(Paths.document, "registro.txt");

@@ -32,7 +32,6 @@ export default function App() {
   const a = useAgenda();
   const [tab, setTab] = useState<Tab>("tasks");
   const [pen, setPen] = useState<PenScreen>("home");
-  const [project, setProject] = useState<string | null>(null);
   const [task, setTask] = useState<VaultTask | null>(null);
   const [event, setEvent] = useState<CalEvent | null>(null);
   const [adding, setAdding] = useState(false);
@@ -49,10 +48,9 @@ export default function App() {
     return () => sub.remove();
   }, []);
 
-  const contextProject = tab === "tasks" ? project : null;
   const contextDay = tab === "calendar" ? day : null;
   // the + button: on the tasks and on a day of the calendar (the month has its own «+ Nuovo»)
-  const showFab = (tab === "tasks" && !!a.vaultName) || (tab === "calendar" && !!day);
+  const showFab = tab === "tasks" || (tab === "calendar" && !!day);
 
   return (
     <SafeAreaProvider>
@@ -68,7 +66,7 @@ export default function App() {
           <HandFrame style={styles.setup} seed="setup">
             <Text style={styles.setupTitle}>Collega il vault di Obsidian</Text>
             <Text style={styles.setupText}>
-              Le attività stanno nelle tue note: scegli la cartella del vault in File → Sul mio iPhone → Obsidian. Le nuove attività finiscono nella cartella «Attività» del vault.
+              Per vedere qui le attività delle tue note e quelle scritte con la penna, scegli la cartella del vault in File → Sul mio iPhone → Obsidian.
             </Text>
             <Pressable onPress={() => void agenda.pickVault()}>
               <HandFrame style={styles.setupBtn} color={C.accent} fill={C.accent + "26"} seed="setupbtn">
@@ -79,7 +77,7 @@ export default function App() {
         ) : null}
 
         <View style={{ flex: 1 }}>
-          {tab === "tasks" && a.vaultName ? <TasksScreen onTask={setTask} onProject={setProject} /> : null}
+          {tab === "tasks" ? <TasksScreen onTask={setTask} /> : null}
           {tab === "calendar" ? <CalendarScreen onTask={setTask} onEvent={setEvent} onDayChange={setDay} onAdd={() => setAdding(true)} /> : null}
           {tab === "pen" ? (
             <View style={{ flex: 1 }}>
@@ -117,7 +115,7 @@ export default function App() {
           ))}
         </SafeAreaView>
 
-        <QuickAddSheet visible={adding} onClose={() => setAdding(false)} project={contextProject} date={contextDay} />
+        <QuickAddSheet visible={adding} onClose={() => setAdding(false)} date={contextDay} />
         <TaskEditor task={task} onClose={() => setTask(null)} />
         <EventSheet ev={event} onClose={() => setEvent(null)} />
       </SafeAreaView>

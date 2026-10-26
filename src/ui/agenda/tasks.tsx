@@ -1,14 +1,13 @@
-// "Attività" (Todoist): only tasks. «In programma»: late, today, the next days, later, without a date.
-// «Progetti»: Inbox, projects, filters, labels, notes with tasks.
-import { useEffect, useState } from "react";
+// "Attività" (Todoist): only tasks: late, today, the next days, later, without a date.
+// Filters (priority, without a date, added in the app, done, labels) in a menu.
+import { useState } from "react";
 import { Pressable, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
-import { Glyph, Text } from "../theme/ui";
+import { Glyph, HandFrame, Text } from "../theme/ui";
 import { themed } from "../theme/theme";
-import { agenda } from "../../app/agenda";
-import { byDateTime, overdue } from "../../core/taskStore";
-import { VaultTask, addDays, parseYmd } from "../../core/tasks";
-import { C, Empty, SectionHeader, Segmented, TaskRow, dayLabel, today, useAgenda } from "./common";
-import { ListFilter, ProjectsScreen, TaskListScreen } from "./projects";
+import { agenda, isAppTask } from "../../app/agenda";
+import { byDateTime, labels, overdue } from "../../core/taskStore";
+import { Priority, VaultTask, addDays, parseYmd } from "../../core/tasks";
+import { C, Empty, PRIORITY_COLOR, SectionHeader, TaskRow, today, useAgenda } from "./common";
 
 const cap = (x: string) => x.replace(/^\p{L}/u, (c) => c.toUpperCase());
 const WD = ["domenica", "lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato"];
@@ -75,42 +74,111 @@ function Planned({ onTask }: { onTask: (t: VaultTask) => void }) {
   );
 }
 
-export function TasksScreen({ onTask, onProject }: { onTask: (t: VaultTask) => void; onProject: (name: string | null) => void }) {
+// ---------------------------------------------------------------- filters (in a menu)
+
+type Filter = { kind: "all" } | { kind: "priority"; p: Priority } | { kind: "nodate" } | { kind: "app" } | { kind: "done" } | { kind: "label"; name: string };
+
+const filterName = (f: Filter): string =>
+  f.kind === "all" ? "Tutte" : f.kind === "priority" ? `Priorità ${f.p}` : f.kind === "nodate" ? "Senza data" : f.kind === "app" ? "Aggiunte nell'app" : f.kind === "done" ? "Completate" : `#${f.name}`;
+
+function applyFilter(tasks: VaultTask[], f: Filter): VaultTask[] {
+  switch (f.kind) {
+    case "priority":
+      return tasks.filter((t) => !t.done && t.priority === f.p).sort(byDateTime);
+    case "nodate":
+      return tasks.filter((t) => !t.done && !t.date).sort(byDateTime);
+    case "app":
+      return tasks.filter((t) => !t.done && isAppTask(t)).sort(byDateTime);
+    case "done":
+      return tasks.filter((t) => t.done).sort((x, y) => (y.doneDate ?? "").localeCompare(x.doneDate ?? "")).slice(0, 150);
+    case "label":
+      return tasks.filter((t) => !t.done && t.labels.includes(f.name)).sort(byDateTime);
+    default:
+      return tasks;
+  }
+}
+
+function FilterMenu({ value, onPick, onClose }: { value: Filter; onPick: (f: Filter) => void; onClose: () => void }) {
   const a = useAgenda();
-  const [mode, setMode] = useState<"planned" | "projects">("planned");
-  const [list, setList] = useState<ListFilter | null>(null);
-  useEffect(() => onProject(null), []);
-  const open = (f: ListFilter | null) => {
-    setList(f);
-    onProject(f?.kind === "project" ? f.name : null);
-  };
-  if (mode === "projects" && list) return <TaskListScreen filter={list} onBack={() => open(null)} onTask={onTask} />;
+  const open = a.tasks.filter((t) => !t.done);
+  const items: { f: Filter; icon: string; color?: string; count?: number }[] = [
+    { f: { kind: "all" }, icon: "tab.tasks" },
+    ...([1, 2, 3] as Priority[]).map((p) => ({ f: { kind: "priority", p } as Filter, icon: "priority", color: PRIORITY_COLOR[p], count: open.filter((t) => t.priority === p).length })),
+    { f: { kind: "nodate" }, icon: "nodate", count: open.filter((t) => !t.date).length },
+    { f: { kind: "app" }, icon: "add", count: open.filter(isAppTask).length },
+    { f: { kind: "done" }, icon: "completed", color: C.green },
+    ...labels(a.tasks).map((l) => ({ f: { kind: "label", name: l.name } as Filter, icon: "label", count: l.open })),
+  ];
+  return (
+    <>
+      <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+      <HandFrame style={st.menu} fill={C.bg} color={C.text} weight={1.2} seed="menu">
+        <ScrollView style={{ maxHeight: 420 }}>
+          {items.map(({ f, icon, color, count }) => {
+            const on = filterName(f) === filterName(value);
+            return (
+              <Pressable key={filterName(f)} onPress={() => onPick(f)} style={({ pressed }) => [st.menuItem, pressed && { backgroundColor: C.line }]}>
+                <Glyph name={icon} size={18} color={color ?? C.sub} />
+                <Text style={[st.menuText, on && { fontWeight: "700", color: C.accent }]}>{filterName(f)}</Text>
+                {count ? <Text style={st.menuCount}>{count}</Text> : null}
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      </HandFrame>
+    </>
+  );
+}
+
+export function TasksScreen({ onTask }: { onTask: (t: VaultTask) => void }) {
+  const a = useAgenda();
+  const [filter, setFilter] = useState<Filter>({ kind: "all" });
+  const [menu, setMenu] = useState(false);
+  const list = filter.kind === "all" ? [] : applyFilter(a.tasks, filter);
   return (
     <View style={{ flex: 1 }}>
-      <Text style={st.title}>Attività</Text>
-      <Segmented
-        value={mode}
-        onChange={(v) => {
-          setMode(v);
-          open(null);
-        }}
-        options={[
-          { value: "planned", label: "In programma" },
-          { value: "projects", label: "Progetti" },
-        ]}
-      />
-      {mode === "planned" ? (
-        <ScrollView refreshControl={<RefreshControl refreshing={a.loading} onRefresh={() => void agenda.refresh()} />} contentContainerStyle={{ paddingBottom: 140 }}>
-          <Planned onTask={onTask} />
-        </ScrollView>
-      ) : (
-        <ProjectsScreen onOpen={open} showTitle={false} />
-      )}
+      <View style={st.head}>
+        <Text style={st.title}>Attività</Text>
+        <Pressable onPress={() => setMenu(!menu)} hitSlop={10}>
+          <HandFrame style={st.filterBtn} color={filter.kind === "all" ? C.line : C.accent} seed="filtro">
+            <Glyph name="filter" size={16} color={filter.kind === "all" ? C.sub : C.accent} />
+            <Text style={[st.filterText, filter.kind !== "all" && { color: C.accent }]}>{filter.kind === "all" ? "Filtri" : filterName(filter)}</Text>
+          </HandFrame>
+        </Pressable>
+      </View>
+      {filter.kind !== "all" ? (
+        <Pressable onPress={() => setFilter({ kind: "all" })} style={st.clear}>
+          <Glyph name="close" size={11} color={C.sub} />
+          <Text style={st.clearText}>togli il filtro</Text>
+        </Pressable>
+      ) : null}
+      <ScrollView refreshControl={<RefreshControl refreshing={a.loading} onRefresh={() => void agenda.refresh()} />} contentContainerStyle={{ paddingBottom: 140 }}>
+        {filter.kind === "all" ? <Planned onTask={onTask} /> : list.length ? list.map((x) => <TaskRow key={x.id} task={x} showDate onPress={() => onTask(x)} />) : <Empty text="Nessuna attività." />}
+      </ScrollView>
+      {menu ? (
+        <FilterMenu
+          value={filter}
+          onClose={() => setMenu(false)}
+          onPick={(f) => {
+            setFilter(f);
+            setMenu(false);
+          }}
+        />
+      ) : null}
     </View>
   );
 }
 
 const st = themed(() => StyleSheet.create({
-  title: { fontSize: 36, fontWeight: "700", color: C.text, paddingHorizontal: 16, paddingTop: 8 },
+  head: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: 8 },
+  title: { fontSize: 36, fontWeight: "700", color: C.text },
+  filterBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 6 },
+  filterText: { fontSize: 15, color: C.sub },
+  clear: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-end", paddingHorizontal: 18, paddingVertical: 2 },
+  clearText: { fontSize: 13, color: C.sub },
+  menu: { position: "absolute", top: 58, right: 12, width: 240, paddingVertical: 4 },
+  menuItem: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, paddingVertical: 10 },
+  menuText: { flex: 1, fontSize: 16, color: C.text },
+  menuCount: { fontSize: 14, color: C.sub },
   free: { color: C.faint, paddingHorizontal: 16, paddingVertical: 10, fontSize: 16 },
 }));

@@ -6,7 +6,8 @@ import NeoPenBle from "../../modules/neopen-ble";
 import { QuickAdd } from "../core/quickadd";
 import { DailyNotesConfig } from "../core/penInbox";
 import { sameTitle } from "../core/similar";
-import { DailyConfig, TaskEdit, appendTask, buildIndex, deleteTask, editTask, projectFile, toggleTask } from "../core/taskStore";
+import { DailyConfig, TaskEdit, appendTask, buildIndex, deleteTask, editTask, toggleTask } from "../core/taskStore";
+import { readText, writeText } from "./files";
 import { VaultTask, ymd } from "../core/tasks";
 
 export interface CalEvent {
@@ -42,6 +43,16 @@ export interface AgendaSnapshot {
   /** Changes when the loaded events are thrown away (calendar changed): screens load their days again. */
   eventsEpoch: number;
 }
+
+/**
+ * Tasks you add in the app with + stay in the app (not in the vault): a markdown file of their own on the phone,
+ * read and edited exactly like the notes of the vault.
+ */
+export const APP_FILE = "@app/Attività.md";
+const APP_DOC = "attivita-app.md";
+const readAny = async (path: string) => (path === APP_FILE ? readText(APP_DOC) : NeoPenBle.readVaultFile(path));
+const writeAny = (path: string, text: string) => (path === APP_FILE ? writeText(APP_DOC, text) : NeoPenBle.writeVaultFile(path, text));
+export const isAppTask = (t: { file: string }) => t.file === APP_FILE;
 
 const toDate = (v: string | Date) => (v instanceof Date ? v : new Date(v));
 
@@ -102,8 +113,12 @@ class Agenda {
   /** Reads the vault again (only the files that changed). */
   async refresh(): Promise<void> {
     const vaultName = this.vaultName();
+    const local = readText(APP_DOC);
+    if (local !== null) this.files.set(APP_FILE, { mtime: Date.now(), text: local });
     if (!vaultName) {
-      this.set({ vaultName: null, tasks: [] });
+      for (const p of [...this.files.keys()]) if (p !== APP_FILE) this.files.delete(p);
+      this.set({ vaultName: null });
+      this.rebuild(null);
       return;
     }
     this.set({ loading: true, vaultName });
@@ -127,7 +142,7 @@ class Agenda {
         const text = await NeoPenBle.readVaultFile(f.path);
         if (text !== null) this.files.set(f.path, { mtime: f.mtime, text });
       }
-      for (const p of [...this.files.keys()]) if (!seen.has(p)) this.files.delete(p);
+      for (const p of [...this.files.keys()]) if (!seen.has(p) && p !== APP_FILE) this.files.delete(p);
       this.rebuild(null);
       void this.syncDoneEvents();
     } catch (e) {
@@ -145,7 +160,7 @@ class Agenda {
 
   /** Applies an edit to a file and writes it into the vault. */
   private async change(path: string, edit: (text: string | null) => string | null): Promise<boolean> {
-    const fresh = await NeoPenBle.readVaultFile(path);
+    const fresh = await readAny(path);
     const next = edit(fresh);
     if (next === null) {
       // the file changed (e.g. in Obsidian): read everything again and let the user retry
@@ -153,7 +168,7 @@ class Agenda {
       this.set({ error: "La nota è cambiata nel frattempo: riprova." });
       return false;
     }
-    const err = NeoPenBle.writeVaultFile(path, next);
+    const err = writeAny(path, next);
     if (err) {
       this.set({ error: `Non riesco a scrivere «${path}»: ${err}` });
       return false;
@@ -176,17 +191,8 @@ class Agenda {
   edit = (t: VaultTask, e: TaskEdit) => this.change(t.file, (text) => (text === null ? null : editTask(text, t, e)));
   remove = (t: VaultTask) => this.change(t.file, (text) => (text === null ? null : deleteTask(text, t, this.snap.tasks)));
 
-  /** New task in a project file (Inbox if none). */
-  addTask = (q: QuickAdd, project?: string | null) => {
-    const name = project || q.project || "Inbox";
-    return this.change(projectFile(name), (text) => appendTask(text, q, name));
-  };
-
-  /** Moves a task to another project: added there, removed here. */
-  async move(t: VaultTask, project: string): Promise<void> {
-    const q: QuickAdd = { title: t.text, date: t.dateFromNote ? t.date : t.date, time: t.time, end: t.end, recurrence: t.recurrence, priority: t.priority, labels: [], project, matched: [] };
-    if (await this.change(projectFile(project), (text) => appendTask(text, q, project))) await this.remove(t);
-  }
+  /** New task added in the app: it stays in the app (not in the vault). */
+  addTask = (q: QuickAdd) => this.change(APP_FILE, (text) => appendTask(text, { ...q, labels: q.labels }, "Attività"));
 
   obsidianLink(path: string): string {
     const vault = this.snap.vaultName ?? "";
@@ -227,7 +233,7 @@ class Agenda {
    * A task with a time written with the pen → event in the iPhone calendar (`calendarId`, or the default one).
    * Not created if a similar event is already there (any calendar, within an hour and a half).
    */
-  async penEvent(e: { title: string; start: Date; end: Date | null; note: string }, calendarId: string | null): Promise<"created" | "exists" | "noAccess" | string> {
+  async penEvent(e: { title: string; start: Date; end: Date | null; note: string }, calendarIds: string[]): Promise<"created" | "exists" | "noAccess" | string> {
     try {
       const p = await Cal.getCalendarPermissions();
       if (!p.granted) return "noAccess";
@@ -235,10 +241,23 @@ class Agenda {
       const from = new Date(e.start.getFullYear(), e.start.getMonth(), e.start.getDate());
       const to = new Date(from.getFullYear(), from.getMonth(), from.getDate() + 1);
       const near = await Cal.listEvents(all.map((c) => c.id), from, to);
-      if (near.some((x) => sameTitle(x.title ?? "", e.title) && Math.abs(toDate(x.startDate).getTime() - e.start.getTime()) <= 90 * 60000)) return "exists";
-      const cal = (calendarId && all.find((c) => c.id === calendarId && c.allowsModifications) ? await Cal.ExpoCalendar.get(calendarId) : null) ?? Cal.getDefaultCalendarSync();
+      const similar = (x: (typeof near)[number]) => sameTitle(x.title ?? "", e.title) && Math.abs(toDate(x.startDate).getTime() - e.start.getTime()) <= 90 * 60000;
+      const targets = calendarIds.filter((id) => all.some((c) => c.id === id && c.allowsModifications));
       const end = e.end && e.end > e.start ? e.end : new Date(e.start.getTime() + 60 * 60000);
-      await cal.createEvent({ title: e.title, startDate: e.start, endDate: end, notes: e.note });
+      if (!targets.length) {
+        // the default calendar: not created if a similar event is in any calendar
+        if (near.some(similar)) return "exists";
+        await Cal.getDefaultCalendarSync().createEvent({ title: e.title, startDate: e.start, endDate: end, notes: e.note });
+      } else {
+        // each chosen calendar gets it (unless it already has it)
+        let made = 0;
+        for (const id of targets) {
+          if (near.some((x) => x.calendarId === id && similar(x))) continue;
+          await (await Cal.ExpoCalendar.get(id)).createEvent({ title: e.title, startDate: e.start, endDate: end, notes: e.note });
+          made++;
+        }
+        if (!made) return "exists";
+      }
       this.dropEvents();
       return "created";
     } catch (err) {
@@ -301,14 +320,18 @@ class Agenda {
       const list = await Cal.listEvents(cals.map((c) => c.id), from, to);
       const hm = (d: Date) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
       const marked = (x: string) => /^\s*✓/.test(x);
-      const hit = list
+      const hits = list
         .filter((e) => !e.recurrenceRule && marked(e.title ?? "") !== done && sameTitle(e.title ?? "", title))
         .filter((e) => !time || e.allDay || hm(toDate(e.startDate)) === time)
-        .sort((a, b) => Math.abs(toDate(a.startDate).getTime() - near.getTime()) - Math.abs(toDate(b.startDate).getTime() - near.getTime()))[0];
+        .sort((a, b) => Math.abs(toDate(a.startDate).getTime() - near.getTime()) - Math.abs(toDate(b.startDate).getTime() - near.getTime()));
+      const hit = hits[0];
       if (!hit) return null;
       const clean = (hit.title ?? "").replace(/^\s*✓\s*/, "");
-      const ev = await Cal.ExpoCalendarEvent.get(hit.id);
-      await ev.update({ title: done ? `✓ ${clean}` : clean });
+      // the same event in several calendars (the pen writes it in each chosen one): all of them
+      for (const x of hits.filter((y) => toDate(y.startDate).getTime() === toDate(hit.startDate).getTime())) {
+        const ev = await Cal.ExpoCalendarEvent.get(x.id);
+        await ev.update({ title: done ? `✓ ${clean}` : clean });
+      }
       this.dropEvents();
       return clean;
     } catch {
@@ -440,7 +463,14 @@ export const agenda = new Agenda();
  * (transcribed by Obsidian) and in the calendar (put there by the phone); the app shows it once, as the task.
  */
 export function visibleEvents(a: AgendaSnapshot, day: string): CalEvent[] {
-  const evs = a.events[day] ?? [];
+  // the same event in several calendars (e.g. written by the pen in each chosen one): shown once
+  const seen = new Set<string>();
+  const evs = (a.events[day] ?? []).filter((e) => {
+    const k = `${e.title.replace(/^\s*✓\s*/, "").trim().toLowerCase()}|${e.start.getTime()}|${e.end.getTime()}|${e.allDay}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
   const timed = a.tasks.filter((t) => t.date === day && t.time);
   if (!timed.length) return evs;
   return evs.filter((e) => {

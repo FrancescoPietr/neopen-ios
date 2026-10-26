@@ -3,7 +3,7 @@ import * as Clipboard from "expo-clipboard";
 import * as Sharing from "expo-sharing";
 import { useState, useSyncExternalStore } from "react";
 import { ActivityIndicator, Alert, FlatList, Pressable, ScrollView, StyleSheet, View } from "react-native";
-import { Glyph, HandFrame, HandSwitch, RowLine, Text, TextInput } from "./theme/ui";
+import { Dot, Glyph, HandFrame, HandSwitch, RowLine, Text, TextInput } from "./theme/ui";
 import { T, themed } from "./theme/theme";
 import { agenda } from "../app/agenda";
 import { model, Snapshot } from "../app/model";
@@ -206,30 +206,33 @@ export function HomeScreen({ go }: { go: (screen: "settings" | "log" | "look") =
 // ---------------------------------------------------------------- settings
 
 /** Which iPhone calendar gets the events written with the pen. */
-function PenCalendar({ value }: { value: string }) {
+function PenCalendar({ value }: { value: string[] }) {
   const a = useSyncExternalStore(agenda.subscribe, agenda.getSnapshot);
   const cals = a.calendars.filter((c) => c.writable);
   if (a.calendarAccess !== "granted") {
     return (
-      <Section title="Calendario degli eventi dalla penna" footer="Serve l'accesso al calendario dell'iPhone.">
+      <Section title="Calendari degli eventi dalla penna" footer="Serve l'accesso al calendario dell'iPhone.">
         <Button label="Consenti l'accesso al calendario" onPress={() => void agenda.initCalendar(true)} />
       </Section>
     );
   }
-  const pick = (id: string) => (
-    <Pressable key={id || "default"} onPress={() => model.update({ penCalendar: id })} style={({ pressed }) => [s.row, pressed && { backgroundColor: C.line }]}>
-      <Text style={[s.rowLabel, { flex: 1 }]}>{id ? cals.find((c) => c.id === id)?.title ?? "?" : "Calendario predefinito dell'iPhone"}</Text>
-      {value === id ? <Glyph name="check.done" size={18} color={C.blue} weight={1.2} /> : null}
+  const chosen = value.filter((id) => cals.some((c) => c.id === id));
+  const toggle = (id: string) => model.update({ penCalendars: chosen.includes(id) ? chosen.filter((x) => x !== id) : [...chosen, id] });
+  const row = (key: string, label: string, on: boolean, onPress: () => void, color?: string) => (
+    <Pressable key={key} onPress={onPress} style={({ pressed }) => [s.row, { gap: 10 }, pressed && { backgroundColor: C.line }]}>
+      {color ? <Dot size={10} color={color} /> : <View style={{ width: 12 }} />}
+      <Text style={[s.rowLabel, { flex: 1 }]}>{label}</Text>
+      {on ? <Glyph name="check.done" size={18} color={C.blue} weight={1.2} /> : null}
       <RowLine />
     </Pressable>
   );
   return (
     <Section
-      title="Calendario degli eventi dalla penna"
-      footer="Se il tuo calendario Google è aggiunto all'iPhone (Impostazioni → Calendario → Account) sceglilo qui: gli eventi arrivano anche su Google."
+      title="Calendari degli eventi dalla penna"
+      footer="Puoi sceglierne più di uno: ogni evento scritto con la penna va in tutti quelli spuntati (nell'app lo vedi una volta sola). Nessuno spuntato = il calendario predefinito dell'iPhone. Il calendario Google c'è se è aggiunto all'iPhone (Impostazioni → Calendario → Account)."
     >
-      {pick("")}
-      {cals.map((c) => pick(c.id))}
+      {row("default", "Calendario predefinito dell'iPhone", !chosen.length, () => model.update({ penCalendars: [] }))}
+      {cals.map((c) => row(c.id, c.title, chosen.includes(c.id), () => toggle(c.id), c.color))}
     </Section>
   );
 }
@@ -339,7 +342,7 @@ export function SettingsScreen() {
         <Button label="Prova Claude a telefono bloccato" onPress={model.testClaude} disabled={!st.testKey.trim()} />
       </Section>
 
-      <PenCalendar value={st.penCalendar} />
+      <PenCalendar value={st.penCalendars} />
 
       <Section
         title="Cartella del vault"

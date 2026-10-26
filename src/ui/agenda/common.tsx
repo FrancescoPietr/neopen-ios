@@ -74,7 +74,7 @@ export function Check({ done, priority, onPress }: { done: boolean; priority: Pr
   return <HandCheck done={done} color={priority < 4 ? PRIORITY_COLOR[priority] : T.inkSoft} onPress={onPress} />;
 }
 
-export function TaskRow({ task, onPress, showDate, showProject = true }: { task: VaultTask; onPress: () => void; showDate?: boolean; showProject?: boolean }) {
+export function TaskRow({ task, onPress, showDate, showProject = false }: { task: VaultTask; onPress: () => void; showDate?: boolean; showProject?: boolean }) {
   const late = !task.done && task.date && task.date < today();
   const meta: string[] = [];
   if (showDate && task.date) meta.push(dayLabel(task.date));

@@ -55,8 +55,8 @@ const realTime = (t: number) => t > 1_000_000_000_000;
 export interface PhoneEventsConfig {
   enabled: boolean;
   apiKey: string;
-  /** iPhone calendar for the events ("" = the default one). */
-  calendarId: string;
+  /** iPhone calendars for the events (none = the default one). */
+  calendarIds: string[];
 }
 
 export class PhoneEvents {
@@ -372,7 +372,7 @@ export class PhoneEvents {
       const key = `e|${looseTitle(e.title)}|${start.toISOString().slice(0, 16)}`;
       if (made.has(key)) continue;
       const when = start.toLocaleString("it-IT", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-      const r = await agenda.penEvent({ title: e.title, start, end: e.end ? new Date(e.end) : null, note: `Scritto con la penna (pagina ${label}).` }, this.config().calendarId || null);
+      const r = await agenda.penEvent({ title: e.title, start, end: e.end ? new Date(e.end) : null, note: `Scritto con la penna (pagina ${label}).` }, this.config().calendarIds);
       if (r === "noAccess") {
         left.push(e);
         this.tellOnce("cal", "Eventi dalla penna in attesa: apri l'app e consenti l'accesso al calendario (Calendario → Consenti), poi li aggiungo.");

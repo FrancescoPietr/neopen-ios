@@ -45,6 +45,7 @@ export const CATALOG: Element[] = [
   { id: "label", group: "Attività", label: "Etichetta", strokes: [[[14, 46], [46, 14], [86, 14], [86, 54], [54, 86], [14, 46]], circle(70, 30, 6)] },
   { id: "note", group: "Attività", label: "Nota", strokes: [[[22, 10], [64, 10], [82, 28], [82, 90], [22, 90], [22, 10]], [[64, 10], [64, 28], [82, 28]], line(34, 48, 70, 48), line(34, 64, 70, 64), line(34, 78, 56, 78)] },
   { id: "clock", group: "Attività", label: "Orario", strokes: [circle(50, 50, 38), [[50, 24], [50, 50], [68, 62]]] },
+  { id: "filter", group: "Attività", label: "Filtri (imbuto)", strokes: [[[12, 18], [88, 18], [58, 52], [58, 84], [42, 76], [42, 52], [12, 18]]] },
   { id: "nodate", group: "Attività", label: "Senza data", strokes: [circle(50, 52, 28), line(20, 88, 82, 14)] },
   { id: "completed", group: "Attività", label: "Completate", strokes: [circle(50, 50, 38), [[30, 52], [45, 67], [72, 34]]] },
 

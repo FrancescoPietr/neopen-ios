@@ -24,11 +24,23 @@ export interface Settings {
   testKey: string;
   /** What you write with the pen goes to the calendar (tasks with a time) and the tasks (the others), from the phone. */
   phoneEvents: boolean;
-  /** iPhone calendar for the pen's events ("" = the default calendar). */
-  penCalendar: string;
+  /** iPhone calendars for the pen's events (none = the default calendar). */
+  penCalendars: string[];
+  /** Before: a single calendar. */
+  penCalendar?: string;
 }
 
-const DEFAULT_SETTINGS: Settings = { scriptURL: "", secret: "", live: true, deleteAfterDownload: false, skipUnchanged: false, penPassword: "", testKey: "", phoneEvents: false, penCalendar: "" };
+const DEFAULT_SETTINGS: Settings = { scriptURL: "", secret: "", live: true, deleteAfterDownload: false, skipUnchanged: false, penPassword: "", testKey: "", phoneEvents: false, penCalendars: [] };
+
+/** One calendar (before) → a list of calendars. */
+function migrate(s: Settings): Settings {
+  if (s.penCalendar !== undefined) {
+    s.penCalendars = s.penCalendar ? [s.penCalendar] : s.penCalendars ?? [];
+    delete s.penCalendar;
+  }
+  if (!Array.isArray(s.penCalendars)) s.penCalendars = [];
+  return s;
+}
 
 export type Phase = { kind: "idle" } | { kind: "handshake" } | { kind: "syncing"; done: number; total: number } | { kind: "listening" } | { kind: "needsPassword" };
 
@@ -59,10 +71,10 @@ export interface Snapshot {
 class AppModel {
   readonly store = new PageStore(new DevicePageFiles());
   readonly uploader = new Uploader(this.store);
-  private settings: Settings = { ...DEFAULT_SETTINGS, ...readJson<Settings>("impostazioni.json", DEFAULT_SETTINGS) };
+  private settings: Settings = migrate({ ...DEFAULT_SETTINGS, ...readJson<Settings>("impostazioni.json", DEFAULT_SETTINGS) });
   readonly phoneEvents = new PhoneEvents(
     this.store,
-    () => ({ enabled: this.settings.phoneEvents, apiKey: this.settings.testKey, calendarId: this.settings.penCalendar }),
+    () => ({ enabled: this.settings.phoneEvents, apiKey: this.settings.testKey, calendarIds: this.settings.penCalendars }),
     (m) => this.write(m)
   );
   private session: PenSession | null = null;

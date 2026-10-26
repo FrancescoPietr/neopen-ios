@@ -119,17 +119,29 @@ function MonthScreen({ month, onMonth, onOpen, onAdd }: { month: string; onMonth
                 <HandLine style={{ position: "absolute", left: 4, right: 4, bottom: -3 }} seed={`w${r}`} />
                 {days.slice(r * 7, r * 7 + 7).map((d) => {
                   const inMonth = parseYmd(d).getMonth() === m.getMonth();
-                  const evs = visibleEvents(a, d);
-                  const open = a.tasks.filter((x) => x.date === d && !x.done).length;
-                  const busy = evs.length > 0 || open > 0;
+                  const items = preview(d, visibleEvents(a, d), onDay(a.tasks, d));
+                  const fit = Math.max(1, Math.floor(((height - 4) / rows - 38) / 14));
+                  const shown = items.length > fit ? items.slice(0, fit - 1) : items;
                   const isToday = d === t;
                   return (
                     <Pressable key={d} onPress={() => onOpen(d)} style={({ pressed }) => [st.cell, pressed && { backgroundColor: C.line }]}>
                       <View style={st.num}>
-                        {isToday ? <HandRing size={40} /> : null}
+                        {isToday ? <HandRing size={32} /> : null}
                         <Text style={[st.numText, !inMonth && { color: C.faint }, isToday && { color: C.accent, fontWeight: "700" }]}>{parseYmd(d).getDate()}</Text>
                       </View>
-                      <View style={st.dotBox}>{busy ? <Dot size={7} color={inMonth ? C.text : C.faint} /> : null}</View>
+                      <View style={st.previews}>
+                        {shown.map((x) => (
+                          <Text
+                            key={x.key}
+                            numberOfLines={1}
+                            ellipsizeMode="tail"
+                            style={[st.pv, { color: inMonth ? (x.event ? C.text : x.color) : C.faint }, x.event && inMonth && { backgroundColor: x.color + "33" }, x.done && st.pvDone]}
+                          >
+                            {x.title}
+                          </Text>
+                        ))}
+                        {items.length > shown.length ? <Text style={st.pvMore}>+{items.length - shown.length}</Text> : null}
+                      </View>
                     </Pressable>
                   );
                 })}
@@ -139,6 +151,15 @@ function MonthScreen({ month, onMonth, onOpen, onAdd }: { month: string; onMonth
       </View>
     </View>
   );
+}
+
+/** What a day of the month shows: all-day events, then events and tasks by time, then the other tasks. */
+function preview(day: string, events: CalEvent[], tasks: VaultTask[]): { key: string; title: string; color: string; done: boolean; event: boolean }[] {
+  const allDay = events.filter((e) => e.allDay).map((e) => ({ key: `a${e.id}`, title: e.title.replace(/^\s*✓\s*/, ""), color: e.color, done: /^\s*✓/.test(e.title), event: true }));
+  const timed = timeline(day, events, tasks).map((x) => ({ key: x.key, title: x.title.replace(/^\s*✓\s*/, ""), color: x.ev ? x.color : C.text, done: x.task ? x.task.done : /^\s*✓/.test(x.title), event: !!x.ev }));
+  const rest = tasks.filter((x) => !x.time).map((x) => ({ key: `t${x.id}`, title: x.title, color: C.text, done: x.done, event: false }));
+  // what is done goes last (and is struck through)
+  return [...allDay, ...timed, ...rest].sort((p, q) => Number(p.done) - Number(q.done));
 }
 
 // ---------------------------------------------------------------- day
@@ -315,10 +336,13 @@ const st = themed(() => StyleSheet.create({
   weekHead: { flexDirection: "row", paddingHorizontal: 8, paddingBottom: 6 },
   weekHeadText: { flex: 1, textAlign: "center", fontSize: 14, color: C.sub },
   weekRow: { flexDirection: "row", paddingHorizontal: 8 },
-  cell: { flex: 1, alignItems: "center", paddingTop: 8, borderRadius: 10 },
-  num: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
-  numText: { fontSize: 20, color: C.text, fontVariant: ["tabular-nums"] },
-  dotBox: { height: 9, marginTop: 1, alignItems: "center", justifyContent: "center" },
+  cell: { flex: 1, alignItems: "center", paddingTop: 4, borderRadius: 6, overflow: "hidden" },
+  num: { width: 32, height: 32, alignItems: "center", justifyContent: "center" },
+  numText: { fontSize: 17, color: C.text },
+  previews: { alignSelf: "stretch", paddingHorizontal: 1, marginTop: 1, gap: 1 },
+  pv: { fontSize: 10.5, lineHeight: 13, paddingHorizontal: 2, borderRadius: 3, overflow: "hidden" },
+  pvDone: { color: C.faint, textDecorationLine: "line-through" },
+  pvMore: { fontSize: 10, lineHeight: 13, color: C.sub },
   dayNav: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: 8 },
   back: { fontSize: 17, color: C.accent },
   dayHead: { paddingHorizontal: 16, paddingTop: 6, paddingBottom: 6 },
