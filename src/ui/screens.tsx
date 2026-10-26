@@ -313,7 +313,8 @@ export function SettingsScreen() {
         footer={
           "Quando smetti di scrivere (penna spenta, o 2 minuti senza tratti) il telefono legge i tratti nuovi con Claude, anche a telefono bloccato e PC spento: " +
           "le attività con un orario diventano eventi nel calendario dell'iPhone, le altre vanno nella nota del giorno del vault (sezione «Attività»). " +
-          "Quando Obsidian trascrive la pagina prende il posto di queste righe, senza doppioni. La chiave resta solo su questo telefono."
+          "Quando Obsidian trascrive la pagina prende il posto di queste righe, senza doppioni. La chiave resta solo su questo telefono.\n" +
+          "Con «Pagine → note di Obsidian» attivo questa lettura veloce si ferma: attività e appuntamenti arrivano dalle note, come nel plugin."
         }
       >
         <TextInput
@@ -348,7 +349,10 @@ export function SettingsScreen() {
         footer={
           "Quando smetti di scrivere il telefono trascrive la pagina e scrive la sua nota nel vault, come il plugin Neo Pen in Obsidian " +
           "(stesse regole dei #tag, template, cartella del taccuino, disegni), anche con Obsidian chiuso e il telefono bloccato. " +
-          "Usa le impostazioni e la chiave di Claude del plugin. Se il PC ha Obsidian aperto, la trascrive lui."
+          "Usa le impostazioni e la chiave di Claude del plugin. Trascrive solo il telefono: Obsidian (PC o iPhone) lo sa e non rifà le pagine, " +
+          "le note gli arrivano con la sincronizzazione.\n" +
+          "Il calendario segue le note: un'attività con l'orario diventa un evento (anche se l'orario lo scrivi dopo, accanto); " +
+          "cancellata sulla carta, l'evento sparisce; orario o data corretti, l'evento si sposta."
         }
       >
         <Toggle label="Pagine → note di Obsidian" value={st.pageNotes} onChange={(v) => model.update({ pageNotes: v })} />

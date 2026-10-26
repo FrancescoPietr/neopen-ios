@@ -2,7 +2,7 @@
 // e aggiunge il testo alla nota della stessa pagina.
 
 import { App, TFile, normalizePath } from "obsidian";
-import { NoteRouter, RoutedNote } from "../notes/NoteRouter";
+import { NoteRouter, RoutedNote, wrapPageCallouts } from "../notes/NoteRouter";
 import { applyIndents } from "./indent";
 import { adoptPhoneTasks } from "../notes/phoneTasks";
 import { expandBounds, renderStrokesPng } from "../render/png";
@@ -883,6 +883,22 @@ export class Transcriber {
     if (result.page_title) result.page_title = this.router.fixTitle(result.page_title);
     for (const l of result.lines) if (l.kind === "newnote") l.text = this.router.fixTitle(l.text);
 
+    // "#taccuino" da solo su una riga e subito sotto parole sottolineate (anche con una linea sola, in grassetto):
+    // è il titolo di una nota nuova di quel tipo, come con la doppia sottolineatura
+    for (let i = 0; i + 1 < result.lines.length; i++) {
+      const tagLine = result.lines[i];
+      const raw = tagLine.text.trim();
+      // "#taccuino", "# taccuino", o una riga "intestazione" fatta della sola parola del tag
+      const m = /^#\s?([\p{L}\p{N}_\-/]+)$/u.exec(raw) ?? (tagLine.kind === "heading" ? /^([\p{L}\p{N}_\-/]+)$/u.exec(raw) : null);
+      if (!m || tagLine.kind === "task" || tagLine.kind === "newnote" || !this.router.ruleFor(m[1].toLowerCase())) continue;
+      const next = result.lines[i + 1];
+      const bold = /^\*\*(.+?)\*\*$/.exec(next.text.trim());
+      const title = next.kind === "heading" ? next.text.replace(/^#+\s*/, "").replace(/\*\*/g, "").trim() : bold?.[1].trim();
+      if (!title || next.kind === "task" || next.kind === "newnote") continue;
+      result.lines.splice(i, 2, { kind: "newnote", text: this.router.fixTitle(title), checked: false, due: "", time: "", tag: m[1].toLowerCase() });
+      this.log(`«#${m[1]}» sopra «${title}» sottolineato: è una nota nuova.`);
+    }
+
     // Titoli con doppia sottolineatura a metà pagina: da lì comincia una nota nuova.
     const groups: { title?: string; tag?: string; lines: TranscribedLine[] }[] = [{ lines: [] }];
     for (const l of result.lines) {
@@ -901,6 +917,16 @@ export class Transcriber {
         this.log(`«${top.title}»: la pagina continua la nota precedente (freccia), il titolo in cima resta nel testo in grassetto.`);
         groups[0].lines = [{ kind: "text", text: `**${top.title}**`, checked: false, due: "" }, ...top.lines];
       }
+    }
+
+    // Pagina nuova che comincia con un titolo (niente testo prima): quel titolo è il titolo della pagina, così non
+    // nasce una nota «Quaderno N - pagina M» vuota
+    if (!routed && !result.page_title && !this.router.isContinuation(key) && groups.length > 1 && !groups[0].lines.some((l) => l.text.trim())) {
+      const first = groups.splice(1, 1)[0];
+      result.page_title = first.title ?? "";
+      if (first.tag && !result.page_tag) result.page_tag = first.tag;
+      groups[0].lines = first.lines;
+      this.log(`Pagina ${key.page}: comincia con il titolo «${result.page_title}», è il titolo della pagina.`);
     }
 
     // #tag dei template: sono SEMPRE il template di un titolo, mai testo (né tag della nota sopra).
@@ -1083,7 +1109,8 @@ export class Transcriber {
       if (result.lines.length < before) this.log(`Pagina ${key.page}: ${before - result.lines.length} righe già presenti nella nota, non le ripeto.`);
     }
     // task che il telefono aveva già messo nella nota del giorno: la trascrizione prende il loro posto
-    if (!force) await adoptPhoneTasks(this.app, result.lines, (m) => this.log(`Pagina ${key.page}: ${m}`));
+    // (in tutte le parti della pagina: anche i task sotto un titolo a metà pagina, es. "#task Task")
+    if (!force) await adoptPhoneTasks(this.app, [...result.lines, ...groups.slice(1).flatMap((g) => g.lines)], (m) => this.log(`Pagina ${key.page}: ${m}`));
     const md = linesToMarkdown(result.lines);
     /** Cosa è stato scritto in quale nota (per mettere i #tag nella nota giusta). */
     const written: { file: TFile; md: string; daily: boolean }[] = [{ file: target.file, md, daily: target.kind === "daily" }];
@@ -1210,6 +1237,8 @@ export class Transcriber {
       }
       extraNotes.push(seg.file.basename);
     }
+    // le immagini della pagina nelle note toccate: nel riquadro chiuso «Pagina N», non a grandezza piena
+    for (const f of new Set(written.map((w) => w.file))) await this.app.vault.process(f, (c) => wrapPageCallouts(c));
     if (force) {
       // parti che non ci sono più nella nuova trascrizione: svuotate
       for (const sg of segs.slice(1).filter((x) => !usedSegs.has(x.blockId))) {

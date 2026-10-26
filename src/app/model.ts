@@ -76,12 +76,12 @@ class AppModel {
   readonly store = new PageStore(new DevicePageFiles());
   readonly uploader = new Uploader(this.store);
   private settings: Settings = migrate({ ...DEFAULT_SETTINGS, ...readJson<Settings>("impostazioni.json", DEFAULT_SETTINGS) });
-  readonly phoneEvents = new PhoneEvents(
+  readonly phoneEvents: PhoneEvents = new PhoneEvents(
     this.store,
-    () => ({ enabled: this.settings.phoneEvents, apiKey: this.settings.testKey, calendarIds: this.settings.penCalendars }),
+    () => ({ enabled: this.settings.phoneEvents, apiKey: this.settings.testKey, calendarIds: this.settings.penCalendars, paused: this.pageNotes?.handles() ?? false }),
     (m) => this.write(m)
   );
-  readonly pageNotes = new PageNotes(
+  readonly pageNotes: PageNotes = new PageNotes(
     this.store,
     () => ({
       enabled: this.settings.pageNotes,
@@ -114,6 +114,7 @@ class AppModel {
     this.started = true;
     this.uploader.log = (m) => this.write(m);
     agenda.log = (m) => this.write(m);
+    agenda.penCalendars = () => this.settings.penCalendars;
     this.uploader.changed = () => this.emit();
     this.uploader.keepAlive = (name) => {
       const id = NeoPenBle.beginBackgroundTask(name);
@@ -271,7 +272,9 @@ class AppModel {
   /** Reads again everything written so far and adds what is missing from the calendar and the tasks. */
   recoverAll = () => {
     const n = this.phoneEvents.recoverAll();
-    if (!n) this.write(this.settings.phoneEvents && this.settings.testKey.trim() ? "Recupero: nessuna pagina scritta da rileggere." : "Recupero: attiva prima «Penna → calendario e attività» e inserisci la chiave di Claude.");
+    if (n) return;
+    if (this.pageNotes.handles()) this.write("Recupero: non serve, le pagine le trascrive il telefono nelle note di Obsidian (attività e calendario arrivano da lì).");
+    else this.write(this.settings.phoneEvents && this.settings.testKey.trim() ? "Recupero: nessuna pagina scritta da rileggere." : "Recupero: attiva prima «Penna → calendario e attività» e inserisci la chiave di Claude.");
   };
 
   /** Name of the chosen vault folder (or null). */
@@ -353,6 +356,7 @@ class AppModel {
     // just turned on: set the starting point (what is already written is not sent)
     if (patch.phoneEvents) this.phoneEvents.kick();
     if (patch.pageNotes) this.pageNotes.request();
+    if (patch.pageNotes === false) void this.pageNotes.heartbeat(true);
     this.emit();
   };
 

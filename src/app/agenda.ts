@@ -473,6 +473,8 @@ class Agenda {
 
   /** Where the app writes what it did by itself (the app's log). */
   log: (m: string) => void = () => undefined;
+  /** The calendars chosen for what is written with the pen (none = the default one). */
+  penCalendars: () => string[] = () => [];
   private following: Promise<void> = Promise.resolve();
 
   /**
@@ -489,7 +491,8 @@ class Agenda {
     if (!files.length) return;
     const now = penTimedTasks(files, this.snap.tasks);
     const prev = readJson<{ list: PenTimed[] | null }>(FOLLOW_FILE, { list: null }).list;
-    const changes = prev ? diffPenTimed(prev, now) : [];
+    // the first reading only sets the starting point (nothing already in the notes is created again)
+    const changes = prev ? diffPenTimed(prev, now, 6, ymd(new Date())) : [];
     if (changes.length) {
       const p = await Cal.getCalendarPermissions();
       // without the calendar: tried again later (the old reading is kept)
@@ -506,6 +509,17 @@ class Agenda {
       const [h, mi] = time.split(":").map(Number);
       return new Date(y, m - 1, d, h, mi);
     };
+    const when = (d: Date) => d.toLocaleString("it-IT", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+    if (c.kind === "create") {
+      // a new appointment in the notes → event (not twice: penEvent skips one already there, in any calendar)
+      const start = at(c.date, c.time);
+      const endAt = c.end ? at(c.date, c.end) : null;
+      const note = c.file.split("/").pop()?.replace(/\.md$/, "") ?? "";
+      const r = await this.penEvent({ title: c.title, start, end: endAt, note: `Scritto con la penna (nota «${note}»).` }, this.penCalendars());
+      if (r === "created") this.log(`«${c.title}» ${when(start)} → calendario.`);
+      else if (r !== "exists" && r !== "noAccess") this.log(`Evento «${c.title}» non creato: ${r}`);
+      return;
+    }
     const cals = (await Cal.getCalendars(Cal.EntityTypes.EVENT)).filter((x) => x.allowsModifications).map((x) => x.id);
     if (!cals.length) return;
     const clean = (t: string | undefined) => (t ?? "").replace(/^\s*✓\s*/, "");
@@ -527,7 +541,6 @@ class Agenda {
     const from = at(c.date, c.time);
     const hits = await penEvents(from, c.title);
     if (!hits.length) return;
-    const when = (d: Date) => d.toLocaleString("it-IT", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
     if (c.kind === "delete") {
       for (const h of hits) await (await Cal.ExpoCalendarEvent.get(h.id)).delete();
       this.log(`«${c.title}» ${when(from)}: cancellata sulla carta → tolta anche dal calendario.`);

@@ -782,7 +782,8 @@ export class NoteRouter {
 
     const tplText = rule?.template ? await this.readTemplate(rule.template) : null;
     if (rule?.template && tplText === null) this.log(`Template "${rule.template}" non trovato: uso quello di base.`);
-    const body = this.buildBody(tplText, v, info.created, drawing ? `![[${this.svgFor(pid)}]]` : "", id, tag, info.title);
+    // l'immagine della pagina sempre nel riquadro chiuso «Pagina N» (anche nelle note nate da un titolo a metà pagina)
+    const body = wrapPageCallouts(this.buildBody(tplText, v, info.created, drawing ? `![[${this.svgFor(pid)}]]` : "", id, tag, info.title));
 
     const path = await this.freePath(folder, title);
     await this.ensureFolder(path);

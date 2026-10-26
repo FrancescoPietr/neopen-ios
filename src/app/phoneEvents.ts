@@ -58,6 +58,12 @@ export interface PhoneEventsConfig {
   apiKey: string;
   /** iPhone calendars for the events (none = the default one). */
   calendarIds: string[];
+  /**
+   * The app writes the notes of the pages itself (pageNotes.ts, the plugin's engine): the tasks go into the notes with
+   * the plugin's rules and the calendar follows the notes. This quick reading is not needed then (it would write
+   * everything twice): what is written meanwhile is skipped.
+   */
+  paused?: boolean;
 }
 
 export class PhoneEvents {
@@ -119,6 +125,17 @@ export class PhoneEvents {
     if (this.idle) clearTimeout(this.idle);
     this.idle = null;
     if (!this.ready()) return;
+    if (this.config().paused) {
+      // the notes take care of it: the strokes count as read (if it is ever turned on again, they are not read twice)
+      for (const r of this.store.pages.values()) {
+        const id = pageId(r.key);
+        this.state.upTo[id] = Math.max(this.state.upTo[id] ?? 0, ...r.strokes.map((s) => s.t));
+      }
+      this.state.base = true;
+      this.state.pending = [];
+      this.save();
+      return;
+    }
     if (!this.state.base) {
       // first time: what is already on the pages is read only if you ask («Recupera»)
       for (const r of this.store.pages.values()) this.state.upTo[pageId(r.key)] = Math.max(0, ...r.strokes.map((s) => s.t));
@@ -153,7 +170,7 @@ export class PhoneEvents {
    * ones in gray, like when you wrote them), and adds what is missing from the calendar and the tasks.
    */
   recoverAll(): number {
-    if (!this.ready()) return 0;
+    if (!this.ready() || this.config().paused) return 0;
     const queued = new Set(this.state.queue.map((q) => `${q.page}|${q.day}`));
     let n = 0;
     for (const r of this.store.pages.values()) {
@@ -239,6 +256,7 @@ export class PhoneEvents {
         this.log(`${label}: lettura non riuscita (${result.error}). ${this.state.fails[info.page] >= 3 ? "Riprovo quando scrivi ancora." : "Riprovo alla prossima."}`);
         continue;
       }
+      if (this.config().paused) continue;
       let found: ReturnType<typeof parseTasks> | null;
       try {
         found = parseTasks(result.body, info.writtenAt);
@@ -283,6 +301,11 @@ export class PhoneEvents {
 
   private async deliverAll(): Promise<void> {
     if (!this.state.pending.length) return;
+    if (this.config().paused) {
+      this.state.pending = [];
+      this.save();
+      return;
+    }
     // iOS keeps the app awake while the notes and events are written (also with the phone locked)
     const task = NeoPenBle.beginBackgroundTask("penna-attivita");
     const items = this.state.pending;

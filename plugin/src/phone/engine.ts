@@ -178,7 +178,8 @@ export async function transcribePages(opts: PhoneEngineOptions, pages: PhonePage
       settings!.spendTotal += dollars;
       void save();
     },
-    () => "",
+    // copie di debug come nel plugin (Impostazioni → Neo Pen → copie di debug)
+    () => (settings!.debugDump ? `${(settings!.rootFolder || "NeoPen").replace(/\/+$/, "")}/_debug` : ""),
     async (ids) => {
       settings!.handwritingRefs = ids;
       await save();

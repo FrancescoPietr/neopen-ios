@@ -157,3 +157,15 @@ test("phone canvas: draws strokes into a real PNG", () => {
   const png = c.png();
   assert.deepEqual([...png.subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 });
+
+test("engine: a time written inside the line makes it an appointment ('andare a mangiare alle 12:00')", async () => {
+  const { io } = vault();
+  const calls = { n: 0 };
+  const log: string[] = [];
+  const r = await transcribePages(options(io, answer(["[ ] andare a mangiare alle 12:00", "[ ] Andare 13:30 in palestra", "[ ] guardare minuto 1:26"]), calls, log), [{ key: key(23), strokes: page(26, 3) }]);
+  assert.equal(r.status, "ok", log.join("\n"));
+  const daily = io.read("Daily/2026-10-26.md")!;
+  assert.match(daily, /- \[ \] 12:00 andare a mangiare/, daily);
+  assert.match(daily, /- \[ \] 13:30 Andare in palestra/, daily);
+  assert.match(daily, /- \[ \] guardare minuto 1:26/, daily);
+});

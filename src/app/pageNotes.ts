@@ -2,7 +2,8 @@
 // Fa girare il motore del plugin Neo Pen (cartella plugin/, lo stesso codice che gira in Obsidian) sulla cartella del
 // vault: stesse impostazioni del plugin (regole dei #tag, template, cartella del taccuino, vocabolario…), stesso stato
 // delle pagine (chi trascrive dopo, app o Obsidian, sa cosa è già fatto) e stesso "turno" per non lavorare in due.
-// Come il plugin in Obsidian sull'iPhone: se il PC è acceso (Obsidian aperto), le pagine le trascrive lui.
+// Un solo trascrittore: lo dice allo script Google (pseudo-pagina "telefono") e Obsidian, sul PC o sull'iPhone, non
+// rifà le pagine: le note gli arrivano già fatte con la sincronizzazione.
 // Parte quando smetti di scrivere (penna spenta o 2 minuti senza tratti), dopo che le attività e gli appuntamenti della
 // pagina sono stati sistemati (così le righe messe dal telefono vengono prese dalla trascrizione, senza doppioni).
 import { Directory, File, Paths } from "expo-file-system";
@@ -29,7 +30,7 @@ type EngineResult =
 
 /** Il motore del plugin (plugin/src/phone/engine.ts). Lo controllano i tipi del plugin, non quelli dell'app. */
 interface EngineModule {
-  readSettings(io: VaultIO): { apiKey?: string; relayMinutes?: number; pageIndex?: Record<string, { done?: number }> } | null;
+  readSettings(io: VaultIO): { apiKey?: string; pageIndex?: Record<string, { done?: number }> } | null;
   pageNeedsWork(settings: object, page: EnginePage): boolean;
   transcribePages(
     opts: {
@@ -131,7 +132,7 @@ export async function backgroundRequest(req: HttpRequest): Promise<HttpResponse>
 
 export interface PageNotesConfig {
   enabled: boolean;
-  /** Lo script Google (per sapere se il PC è acceso), se configurato. */
+  /** Lo script Google (per dire a Obsidian che trascrive il telefono), se configurato. */
   relay: { url: string; secret: string } | null;
 }
 
@@ -141,8 +142,6 @@ export class PageNotes {
   private notBefore = 0;
   private idle: ReturnType<typeof setTimeout> | null = null;
   private told = new Set<string>();
-  /** Obsidian was open on the PC at the last check (to say it once, not every time). */
-  private pcOpen = false;
 
   constructor(
     private store: PageStore,
@@ -188,20 +187,54 @@ export class PageNotes {
       });
   }
 
-  /** Ultima volta che il PC (Obsidian aperto) ha preso le pagine dallo script; 0 se non si sa. */
-  private async pcSeen(): Promise<number> {
+  private handlesAt = 0;
+  private handlesValue = false;
+
+  /**
+   * The notes of the pages are written here (interruttore acceso, cartella del vault scelta, plugin con la chiave di
+   * Claude)? Then everything comes from the notes, as with the plugin: the quick reading of the pages (phoneEvents)
+   * stops, so nothing is written twice (an appointment also among the tasks, the same task twice).
+   */
+  handles(): boolean {
+    if (!this.config().enabled) return false;
+    if (Date.now() - this.handlesAt < 60_000) return this.handlesValue;
+    this.handlesAt = Date.now();
+    try {
+      const settings = NeoPenBle.vaultFolderName() ? engine.readSettings(new NativeVaultIO()) : null;
+      this.handlesValue = !!settings?.apiKey?.trim();
+    } catch {
+      this.handlesValue = false;
+    }
+    return this.handlesValue;
+  }
+
+  private beatAt = 0;
+  private beatValue = -1;
+
+  /**
+   * Dice allo script Google che le pagine le trascrive il telefono (pseudo-pagina "telefono", count = adesso; 0 se
+   * l'interruttore è spento): Obsidian sul PC o sull'iPhone allora non le rifà (un solo trascrittore, niente doppioni).
+   */
+  async heartbeat(force = false): Promise<void> {
     const relay = this.config().relay;
-    if (!relay) return 0;
+    if (!relay) return;
+    const on = this.config().enabled;
+    if (!force && on && this.beatValue > 0 && Date.now() - this.beatAt < 6 * 3_600_000) return;
+    if (!force && !on && this.beatValue === 0) return;
+    const count = on ? Date.now() : 0;
     try {
       const res = await backgroundRequest({
         url: relay.url,
         method: "POST",
         contentType: "text/plain;charset=utf-8",
-        body: JSON.stringify({ secret: relay.secret, relay: { action: "list", device: "telefono" } }),
+        body: JSON.stringify({ secret: relay.secret, relay: { action: "put", pages: [{ id: "telefono", count, strokes: [] }] } }),
       });
-      return Number(JSON.parse(res.text)?.pcSeen) || 0;
+      if (res.status >= 200 && res.status < 300) {
+        this.beatAt = Date.now();
+        this.beatValue = count;
+      }
     } catch {
-      return 0;
+      /* si riprova alla prossima */
     }
   }
 
@@ -217,26 +250,14 @@ export class PageNotes {
       this.tellOnce("settings", "Note di Obsidian: nel vault non trovo le impostazioni del plugin Neo Pen (.obsidian/plugins/neo-pen).");
       return;
     }
-    const pages: EnginePage[] = [...this.store.pages.values()].map((r) => ({ key: r.key, strokes: r.strokes }));
-    if (!pages.some((p) => engine.pageNeedsWork(settings, p))) return;
     if (!settings.apiKey?.trim()) {
       this.tellOnce("key", "Note di Obsidian: nel plugin Neo Pen manca la chiave di Claude.");
       return;
     }
-    // Obsidian aperto sul PC (lo script lo sente ogni minuto finché è aperto): trascrive lui. Appena smette di farsi
-    // sentire (Obsidian chiuso, PC spento) le pagine le fa il telefono, da solo.
-    const pc = await this.pcSeen();
-    const every = Math.max(1, settings.relayMinutes || 1) * 60_000;
-    const window = Math.max(3 * 60_000, every * 2 + 60_000);
-    if (pc && Date.now() - pc < window) {
-      if (!this.pcOpen) this.log("Note di Obsidian: Obsidian è aperto sul PC, le pagine le trascrive lui.");
-      this.pcOpen = true;
-      this.wanted = true;
-      this.notBefore = pc + window + 5_000;
-      return;
-    }
-    if (this.pcOpen) this.log("Note di Obsidian: Obsidian sul PC è chiuso, le pagine le trascrive il telefono.");
-    this.pcOpen = false;
+    // da qui le pagine le trascrive solo il telefono: Obsidian (PC o iPhone) lo legge nello script e non le rifà
+    await this.heartbeat();
+    const pages: EnginePage[] = [...this.store.pages.values()].map((r) => ({ key: r.key, strokes: r.strokes }));
+    if (!pages.some((p) => engine.pageNeedsWork(settings, p))) return;
     // the notes as they are now: afterwards the calendar follows what the transcription changed (agenda.followPen)
     await agenda.freshTasks();
     const r = await engine.transcribePages(

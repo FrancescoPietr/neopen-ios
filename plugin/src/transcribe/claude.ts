@@ -249,6 +249,27 @@ function buildUserText(
 }
 
 /** Converte una riga compatta ("[ ] 15:00 Chiamare Marco @2026-10-23", "# Titolo"…) nel formato interno. */
+/**
+ * Orario dentro il testo di un'attività: "alle 12", "alle 12:00", "ore 9.30", "h 18", "dalle 9 alle 11", oppure
+ * "12:00" in fondo alla riga. Restituisce l'orario (HH:MM), la fine se c'è e il testo senza.
+ */
+export function timeInText(s: string): { time: string; end: string; rest: string } | null {
+  const ok = (h: string, m = "00") => Number(h) < 24 && Number(m) < 60;
+  const fmt = (h: string, m = "00") => `${h.padStart(2, "0")}:${m.padStart(2, "0")}`;
+  const word = /(?:^|\s)(?:dalle|alle|ore|h\.?)\s*(\d{1,2})(?:[:.](\d{2}))?(?:\s*(?:-|–|alle|fino alle)\s*(\d{1,2})(?:[:.](\d{2}))?)?(?=$|[\s,.;:!?)])/i.exec(s);
+  const tail = /(?:^|\s)(\d{1,2})[:.](\d{2})(?:\s*[-–]\s*(\d{1,2})[:.](\d{2}))?\s*$/.exec(s);
+  // un orario hh:mm in mezzo alla riga ("andare 12:00 a mangiare")
+  const mid = /(?:^|\s)(\d{1,2}):(\d{2})(?=$|[\s,;!?)])/.exec(s);
+  const m = word ?? tail ?? mid;
+  if (!m || !ok(m[1], m[2])) return null;
+  // "minuto 1:26", "secondo 0:35", "pagina 2:10": non sono orari
+  if (m !== word && /(?:minut[oi]|min|second[oi]|sec|pagin[ae]|pag|capitol[oi]|cap)\.?\s*$/i.test(s.slice(0, m.index))) return null;
+  const end = m[3] !== undefined && ok(m[3], m[4]) ? fmt(m[3], m[4]) : "";
+  const rest = `${s.slice(0, m.index)} ${s.slice(m.index + m[0].length)}`.replace(/\s+/g, " ").replace(/\s+([,.;:!?])/g, "$1").trim();
+  if (!rest) return null;
+  return { time: fmt(m[1], m[2]), end, rest };
+}
+
 export function parseLine(raw: unknown): TranscribedLine {
   if (raw && typeof raw === "object") {
     const o = raw as Record<string, unknown>;
@@ -267,6 +288,16 @@ export function parseLine(raw: unknown): TranscribedLine {
       time = `${tm[1].padStart(2, "0")}:${tm[2]}`;
       if (okT(tm[3], tm[4])) end = `${tm[3].padStart(2, "0")}:${tm[4]}`;
       s = s.slice(tm[0].length);
+    }
+    // l'orario scritto dentro il testo ("andare a mangiare alle 12:00", "dentista ore 15", "palestra 18:30"):
+    // è l'orario dell'attività (diventa un appuntamento), non parte del titolo
+    if (!time) {
+      const at = timeInText(s);
+      if (at) {
+        time = at.time;
+        end = at.end;
+        s = at.rest;
+      }
     }
     let due = "";
     const dm = /\s*@(\d{4}-\d{2}-\d{2})\s*$/.exec(s);

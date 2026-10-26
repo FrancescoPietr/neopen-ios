@@ -1072,6 +1072,9 @@ export function addOrphanLabels(
   const used = new Set<Stroke>();
   for (const d of placed) for (const s of [...d.strokes, ...(d.labelStrokes ?? [])]) used.add(s);
   for (const d of placed) {
+    // testo scritto accanto al disegno (lo dice Claude): sono righe del testo, non note in fondo a una freccia
+    // (la coda di una stella o un tratto lungo del disegno sembrano frecce verso quelle righe)
+    if (((specs[d.index] as { lines_beside?: number }).lines_beside ?? 0) > 0) continue;
     const notes = findOrphanNotes(d.strokes, used, candidates);
     if (!notes.length) continue;
     // (le righe che ripetono una scritta già trovata non sono della nota)

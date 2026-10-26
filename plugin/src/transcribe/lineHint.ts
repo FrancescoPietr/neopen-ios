@@ -525,7 +525,9 @@ export function strikeErasure(strikes: Stroke[], allStrokes: Stroke[]): Stroke[]
       return q !== bxs && qb.x1 - qb.x0 < 3 * H && qb.y1 - qb.y0 < 3 * H && qb.x0 < b.x1 + 0.3 * H && qb.x1 > b.x0 - 0.3 * H && qb.y0 < b.y1 + 0.3 * H && qb.y1 > b.y0 - 0.3 * H && qb.x0 < b.x1;
     });
     if (hasText) for (const q of inBox) erased.delete(q);
-    else {
+    else if (lines.some(({ b: lb }) => lb.y1 >= b.y0 - H && lb.y0 <= b.y1 + H) || [...erased].some((q) => q !== bxs && Math.abs((bx(q).y0 + bx(q).y1) / 2 - cy) < 1.0 * H)) {
+      // solo se su quella riga c'è davvero una cancellatura: una forma chiusa da sola (una stellina, un disegno)
+      // senza niente di cancellato vicino non è un task cancellato
       erased.add(bxs);
       for (const q of inBox) erased.add(q);
     }

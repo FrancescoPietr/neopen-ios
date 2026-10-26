@@ -13,11 +13,14 @@ export interface PenTimed {
   time: string;
   end: string | null;
   file: string;
+  /** Ticked (a ticked task is not created in the calendar). Missing in readings saved by older versions. */
+  done?: boolean;
 }
 
 export type FollowChange =
   | { kind: "delete"; title: string; date: string; time: string }
-  | { kind: "move"; title: string; date: string; time: string; to: { title: string; date: string; time: string; end: string | null } };
+  | { kind: "move"; title: string; date: string; time: string; to: { title: string; date: string; time: string; end: string | null } }
+  | { kind: "create"; title: string; date: string; time: string; end: string | null; file: string };
 
 const BLOCK = /^<!--\s*(\/?)neopen:testo:([^\s>]+)\s*-->\s*$/;
 
@@ -45,7 +48,7 @@ export function penTimedTasks(files: { path: string; text: string }[], tasks: Va
     const k = keyOf(t.title, t.date, t.time);
     if (seen.has(k)) continue;
     seen.add(k);
-    out.push({ title: t.title, date: t.date, time: t.time, end: t.end, file: t.file });
+    out.push({ title: t.title, date: t.date, time: t.time, end: t.end, file: t.file, done: t.done });
   }
   return out;
 }
@@ -54,10 +57,10 @@ const keyOf = (title: string, date: string, time: string) => `${looseTitle(title
 
 /**
  * What changed between two readings of the notes. A task that disappeared and came back with the same title and a
- * different date/time has moved; one that disappeared for good is deleted. Too many deletions at once (the vault
+ * different date/time has moved; one that disappeared for good is deleted; one that is new is created. Too many deletions at once (the vault
  * read only in part, a sync in progress) are not trusted: nothing is deleted then.
  */
-export function diffPenTimed(before: PenTimed[], after: PenTimed[], maxDeletes = 6): FollowChange[] {
+export function diffPenTimed(before: PenTimed[], after: PenTimed[], maxDeletes = 6, today = "", maxCreates = 10): FollowChange[] {
   if (before.length && !after.length) return [];
   const beforeKeys = new Set(before.map((b) => keyOf(b.title, b.date, b.time)));
   const afterKeys = new Set(after.map((a) => keyOf(a.title, a.date, a.time)));
@@ -77,5 +80,10 @@ export function diffPenTimed(before: PenTimed[], after: PenTimed[], maxDeletes =
       deletes.push({ kind: "delete", title: b.title, date: b.date, time: b.time });
     }
   }
-  return deletes.length > maxDeletes ? moves : [...moves, ...deletes];
+  // new appointments in the notes (a time written on the paper, also beside a task written before): an event, like the
+  // plugin did with Google Calendar. Not the ticked ones, not the past, not a flood (a whole vault arriving at once).
+  const creates: FollowChange[] = fresh
+    .filter((a) => !used.has(a) && !a.done && (!today || a.date >= today))
+    .map((a) => ({ kind: "create", title: a.title, date: a.date, time: a.time, end: a.end, file: a.file }));
+  return [...moves, ...(deletes.length > maxDeletes ? [] : deletes), ...(creates.length > maxCreates ? [] : creates)];
 }

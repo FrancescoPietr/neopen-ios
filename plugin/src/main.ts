@@ -57,6 +57,8 @@ export default class NeoPenPlugin extends Plugin {
   private relayBusy = false;
   private relaySeen = new Map<string, number>();
   private relayFailed = "";
+  /** L'app del telefono trascrive le pagine lei (visto nello script). */
+  private phoneTranscribes = false;
   private needsDrawingTidy = false;
   private calendarHandedOver = false;
   /** v0.13: le note vanno nella cartella del quaderno (dentro "Me"), senza data nel nome: cartella di prima. */
@@ -575,6 +577,17 @@ export default class NeoPenPlugin extends Plugin {
         if (!this.mobileWorking) this.log("Il PC è spento: trascrivo da qui.");
         this.mobileWorking = true;
       }
+      // l'app NeoTransfer trascrive le pagine sul telefono (e lo dice allo script): qui non si rifanno, le note arrivano
+      // già fatte con la sincronizzazione (due dispositivi che trascrivono la stessa pagina fanno doppioni)
+      const phone = ((list.pages ?? []) as RelayPage[]).find((p) => p.id === "telefono");
+      if (phone && Date.now() - Number(phone.count) < 3 * 86_400_000) {
+        if (!this.phoneTranscribes) this.log("Le pagine le trascrive l'app sul telefono: Obsidian riceve le note già fatte.");
+        this.phoneTranscribes = true;
+        this.mobileWorking = false;
+        if (verbose) new Notice("Neo Pen: le pagine le trascrive l'app sul telefono.");
+        return 0;
+      }
+      this.phoneTranscribes = false;
       await this.phoneMaintenance();
       let pages = 0;
       let fresh = 0;

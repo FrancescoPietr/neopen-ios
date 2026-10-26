@@ -65,6 +65,25 @@ function fenceToggle(line: string): boolean {
   return /^\s*```/.test(line);
 }
 
+/**
+ * A time inside the text (the same rule as timeInText in the plugin, plugin/src/transcribe/claude.ts): "alle/ore/
+ * dalle/h HH(:MM)", "HH:MM" at the end or in the middle. "minuto 1:26", "pagina 2:10" are not times.
+ */
+export function timeInText(s: string): { time: string; end: string; rest: string } | null {
+  const ok = (h: string, m = "00") => Number(h) < 24 && Number(m) < 60;
+  const fmt = (h: string, m = "00") => `${h.padStart(2, "0")}:${m.padStart(2, "0")}`;
+  const word = /(?:^|\s)(?:dalle|alle|ore|h\.?)\s*(\d{1,2})(?:[:.](\d{2}))?(?:\s*(?:-|–|alle|fino alle)\s*(\d{1,2})(?:[:.](\d{2}))?)?(?=$|[\s,.;:!?)])/i.exec(s);
+  const tail = /(?:^|\s)(\d{1,2})[:.](\d{2})(?:\s*[-–]\s*(\d{1,2})[:.](\d{2}))?\s*$/.exec(s);
+  const mid = /(?:^|\s)(\d{1,2}):(\d{2})(?=$|[\s,;!?)])/.exec(s);
+  const m = word ?? tail ?? mid;
+  if (!m || !ok(m[1], m[2])) return null;
+  if (m !== word && /(?:minut[oi]|min|second[oi]|sec|pagin[ae]|pag|capitol[oi]|cap)\.?\s*$/i.test(s.slice(0, m.index))) return null;
+  const end = m[3] !== undefined && ok(m[3], m[4]) ? fmt(m[3], m[4]) : "";
+  const rest = `${s.slice(0, m.index)} ${s.slice(m.index + m[0].length)}`.replace(/\s+/g, " ").replace(/\s+([,.;:!?])/g, "$1").trim();
+  if (!rest) return null;
+  return { time: fmt(m[1], m[2]), end, rest };
+}
+
 export function parseTaskLine(raw: string): Omit<VaultTask, "id" | "file" | "line" | "project" | "parent" | "dateFromNote"> | null {
   const m = TASK_LINE.exec(raw);
   if (!m) return null;
@@ -123,6 +142,15 @@ export function parseTaskLine(raw: string): Omit<VaultTask, "id" | "file" | "lin
     time = `${t[1].padStart(2, "0")}:${t[2]}`;
     if (t[3]) end = `${t[3].padStart(2, "0")}:${t[4]}`;
     rest = rest.slice(t[0].length);
+  } else {
+    // the time written inside the text, as the Neo Pen plugin reads it ("andare a mangiare alle 12:00",
+    // "dentista ore 15", "andare 12:00 mangiare"): the task is an appointment, not a plain task
+    const at = timeInText(rest);
+    if (at) {
+      time = at.time;
+      end = at.end || null;
+      rest = at.rest;
+    }
   }
   const text = rest.trim();
   const labels = [...text.matchAll(/(?:^|\s)#([\p{L}\p{N}_\-/]+)/gu)].map((l) => l[1].toLowerCase());
