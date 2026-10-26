@@ -1,0 +1,45 @@
+# Build the app on GitHub's Mac (free for this public repository, no EAS build minutes used) and send it to TestFlight.
+# Starts when a tag "testflight-…" is pushed (e.g. `git tag testflight-17 && git push origin testflight-17`).
+# Needs one secret: EXPO_TOKEN (expo.dev → Account settings → Access tokens). Signing certificate, profile and the
+# App Store Connect key are the ones already saved on EAS (the same used by `eas build` / `eas submit`).
+name: testflight
+on:
+  push:
+    tags: ["testflight-*"]
+  workflow_dispatch:
+jobs:
+  testflight:
+    runs-on: macos-26
+    timeout-minutes: 90
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EXPO_NO_TELEMETRY: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Xcode
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_2[6-9]*.app 2>/dev/null | sort -V | tail -1 || ls -d /Applications/Xcode.app)"
+          xcodebuild -version
+      - name: Token
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then echo "::error::Manca il secret EXPO_TOKEN (Settings → Secrets and variables → Actions)"; exit 1; fi
+      - name: Install
+        run: npm ci
+      - name: Tests
+        run: npm run typecheck && npm test
+      - name: Build (on this Mac, signed with the credentials on EAS)
+        run: npx eas-cli@latest build --platform ios --profile production --local --non-interactive --output "$RUNNER_TEMP/NeoTransfer.ipa"
+      - name: Send to TestFlight
+        run: npx eas-cli@latest submit --platform ios --profile production --path "$RUNNER_TEMP/NeoTransfer.ipa" --non-interactive
+      - name: Keep the app file
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NeoTransfer-ipa
+          path: ${{ runner.temp }}/NeoTransfer.ipa
+          if-no-files-found: ignore
+          retention-days: 7

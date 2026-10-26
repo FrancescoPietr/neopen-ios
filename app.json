@@ -8,7 +8,7 @@
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.neopen.app",
+      "bundleIdentifier": "com.francesco.neopen",
       "infoPlist": {
         "NSBluetoothAlwaysUsageDescription": "Neo Pen si collega alla tua Neo Smartpen per scaricare le pagine che scrivi, anche con l'app in background.",
         "UIBackgroundModes": [
@@ -34,6 +34,11 @@
           ]
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "52b223ed-59f2-4bf3-8f51-0f5f7a7fea4b"
+      }
+    }
   }
 }
