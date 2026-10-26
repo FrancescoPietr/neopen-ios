@@ -58,15 +58,20 @@ struct StrokesShape: Shape {
     var p = Path()
     let pts = strokes.flatMap { $0 }
     guard !pts.isEmpty else { return p }
-    var minX = 0.0, minY = 0.0, maxX = 100.0, maxY = 100.0
+    var minX: CGFloat = 0
+    var minY: CGFloat = 0
+    var maxX: CGFloat = 100
+    var maxY: CGFloat = 100
     if fit {
-      minX = pts.map(\.x).min()!
-      maxX = pts.map(\.x).max()!
-      minY = pts.map(\.y).min()!
-      maxY = pts.map(\.y).max()!
+      let xs: [CGFloat] = pts.map { $0.x }
+      let ys: [CGFloat] = pts.map { $0.y }
+      minX = xs.min() ?? 0
+      maxX = xs.max() ?? 100
+      minY = ys.min() ?? 0
+      maxY = ys.max() ?? 100
     }
-    let sx = r.width / max(1, maxX - minX)
-    let sy = r.height / max(1, maxY - minY)
+    let sx: CGFloat = r.width / max(1, maxX - minX)
+    let sy: CGFloat = r.height / max(1, maxY - minY)
     for s in strokes {
       guard let f = s.first else { continue }
       p.move(to: CGPoint(x: r.minX + (f.x - minX) * sx, y: r.minY + (f.y - minY) * sy))
@@ -91,7 +96,9 @@ struct WobblyCircle: Shape {
       let t = Double(i) / Double(n)
       let a = start + t * total
       let k = 1 + 0.06 * sin(a * 2 + k1) + 0.05 * t
-      let pt = CGPoint(x: r.midX + cos(a) * r.width / 2 * k, y: r.midY + sin(a) * r.height / 2 * k)
+      let rx: CGFloat = r.width / 2 * CGFloat(k)
+      let ry: CGFloat = r.height / 2 * CGFloat(k)
+      let pt = CGPoint(x: r.midX + CGFloat(cos(a)) * rx, y: r.midY + CGFloat(sin(a)) * ry)
       if i == 0 { p.move(to: pt) } else { p.addLine(to: pt) }
     }
     return p
@@ -105,10 +112,11 @@ struct HandRule: Shape {
   func path(in r: CGRect) -> Path {
     var p = Path()
     let y = r.midY
-    let amp = min(r.width, 90)
+    let amp: CGFloat = min(r.width, 90)
     if let prof = profile, prof.count > 2 {
       for (i, d) in prof.enumerated() {
-        let pt = CGPoint(x: r.minX + r.width * Double(i) / Double(prof.count - 1), y: y + d * amp)
+        let t = CGFloat(i) / CGFloat(prof.count - 1)
+        let pt = CGPoint(x: r.minX + r.width * t, y: y + CGFloat(d) * amp)
         if i == 0 { p.move(to: pt) } else { p.addLine(to: pt) }
       }
       return p
@@ -118,7 +126,7 @@ struct HandRule: Shape {
     let n = 16
     for i in 0...n {
       let t = Double(i) / Double(n)
-      let pt = CGPoint(x: r.minX + r.width * t, y: y + sin(phase + t * .pi * 1.4) * 0.9)
+      let pt = CGPoint(x: r.minX + r.width * CGFloat(t), y: y + CGFloat(sin(phase + t * .pi * 1.4) * 0.9))
       if i == 0 { p.move(to: pt) } else { p.addLine(to: pt) }
     }
     return p
