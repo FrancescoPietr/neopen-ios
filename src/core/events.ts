@@ -21,7 +21,8 @@ For each task write {title, start, end, date, done}:
 - end: "HH:MM" for a time range, else "".
 - date: "YYYY-MM-DD" if a day is written ("oggi", "domani", "dopodomani", a weekday, "17/10"), computed from TODAY given below (a weekday means the next one, today included); else "".
 - done: true if its box is ticked or crossed (in any ink), else false.
-Plain notes, lists without boxes and drawings are not tasks. If there are none, tasks is [].`;
+Plain notes, lists without boxes and drawings are not tasks. If there are none, tasks is [].
+TAGS ARE NOT TASKS: a "#" (two pairs of crossed lines, like a hash or a small grid, often drawn big and fast) followed by a word is a TAG that says what the page or the note is about (e.g. "#taccuino", "#task", "#cinema"), never a box: a line with "#word" is NOT a task, even if the "#" looks like a crossed box. A task box is a closed square (four sides), empty, ticked or crossed, followed by an action. A word right after a "#" that is one of the author's tags (listed below) is always a tag.`;
 
 const SCHEMA = {
   type: "object",
@@ -55,9 +56,10 @@ export function strokesAfter(r: PageRecord, upTo: number): Stroke[] {
 }
 
 /** Request body for the Messages API. `writtenAt` = when the strokes were written (for "oggi", "domani"…). */
-export function eventsRequest(pngBase64: string, size: { width: number; height: number }, writtenAt: number, model = EVENTS_MODEL): string {
+export function eventsRequest(pngBase64: string, size: { width: number; height: number }, writtenAt: number, model = EVENTS_MODEL, tags: string[] = []): string {
   const today = localDay(writtenAt);
   const wd = WEEKDAYS[new Date(writtenAt).getDay()];
+  const known = tags.length ? ` The author's tags: ${tags.map((t) => `#${t}`).join(" ")}.` : "";
   return JSON.stringify({
     model,
     max_tokens: 1500,
@@ -67,7 +69,7 @@ export function eventsRequest(pngBase64: string, size: { width: number; height: 
         role: "user",
         content: [
           { type: "image", source: { type: "base64", media_type: "image/png", data: pngBase64 } },
-          { type: "text", text: `TODAY is ${wd} ${today}. The image is ${size.width} × ${size.height} pixels.` },
+          { type: "text", text: `TODAY is ${wd} ${today}. The image is ${size.width} × ${size.height} pixels.${known}` },
         ],
       },
     ],
@@ -140,4 +142,12 @@ export function parseTasks(body: string, writtenAt: number): { events: PhoneEven
     events.push({ title, start: start.toISOString(), end: end && end > start ? end.toISOString() : "" });
   }
   return { events, todos, ticks };
+}
+
+/** A "task" that is only one of the author's tags ("#taccuino" read as a box + "taccuino"): not a task. */
+export function isOnlyTag(title: string, tags: string[]): boolean {
+  const t = title.trim().replace(/^#/, "").toLowerCase();
+  if (!t || /\s/.test(t)) return false;
+  const plain = (x: string) => x.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  return tags.some((tag) => plain(tag) === plain(t));
 }

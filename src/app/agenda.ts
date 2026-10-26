@@ -136,6 +136,7 @@ class Agenda {
           /* default */
         }
       }
+      await this.readTags();
       const list = await NeoPenBle.listVaultMarkdown();
       const seen = new Set<string>();
       for (const f of list) {
@@ -439,6 +440,32 @@ class Agenda {
       this.set({ events });
     } catch (e) {
       this.set({ error: `Calendario: ${e instanceof Error ? e.message : String(e)}` });
+    }
+  }
+
+  // ---------------------------------------------------------------- the author's #tags (like the plugin's knownTags)
+
+  private tags: string[] = [];
+  private templatesFolder = "";
+
+  /** The tags of the plugin's rules and the names of the templates (#cinema → Templates/Cinema.md). */
+  knownTags(): string[] {
+    const fromTemplates = this.templatesFolder
+      ? [...this.files.keys()].filter((p) => p.startsWith(this.templatesFolder + "/") && p.endsWith(".md")).map((p) => p.slice(this.templatesFolder.length + 1, -3))
+      : [];
+    const name = (t: string) => t.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "");
+    return [...new Set([...this.tags, ...fromTemplates.map(name)].filter(Boolean))];
+  }
+
+  private async readTags(): Promise<void> {
+    try {
+      const plugin = JSON.parse((await NeoPenBle.readVaultFile(".obsidian/plugins/neo-pen/data.json")) ?? "{}");
+      this.tags = (Array.isArray(plugin.rules) ? plugin.rules : []).flatMap((r: { tags?: string[] }) => (Array.isArray(r.tags) ? r.tags : [])).map((t: string) => String(t).toLowerCase());
+      const tp = JSON.parse((await NeoPenBle.readVaultFile(".obsidian/plugins/templater-obsidian/data.json")) ?? "{}");
+      const core = JSON.parse((await NeoPenBle.readVaultFile(".obsidian/templates.json")) ?? "{}");
+      this.templatesFolder = String(tp.templates_folder || core.folder || "").replace(/^\/+|\/+$/g, "");
+    } catch {
+      /* keeps what it had */
     }
   }
 

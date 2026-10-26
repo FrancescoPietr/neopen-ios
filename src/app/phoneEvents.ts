@@ -8,7 +8,7 @@
 // The requests go on with the phone locked (BackgroundHttp.swift); their answers arrive with the onHttpDone event.
 import { Directory, File, Paths } from "expo-file-system";
 import NeoPenBle from "../../modules/neopen-ble";
-import { PhoneEvent, PhoneTick, PhoneTodo, eventsRequest, localDay, parseTasks, strokesAfter } from "../core/events";
+import { EVENTS_MODEL, PhoneEvent, PhoneTick, PhoneTodo, eventsRequest, isOnlyTag, localDay, parseTasks, strokesAfter } from "../core/events";
 import { keyLabel, PageKey, PageRecord, pageId, Stroke } from "../core/models";
 import { addToDaily, dailyPath } from "../core/penInbox";
 import { renderNewStrokesPng } from "../core/render";
@@ -209,7 +209,7 @@ export class PhoneEvents {
     const req = `ev-${Date.now()}-${++this.counter}`;
     const f = new File(this.dir(), `${req}.req`);
     f.create({ overwrite: true });
-    f.writeSync(eventsRequest(toBase64(png.bytes), png, writtenAt));
+    f.writeSync(eventsRequest(toBase64(png.bytes), png, writtenAt, EVENTS_MODEL, agenda.knownTags()));
     const ok = NeoPenBle.startBackgroundPost(
       req,
       "https://api.anthropic.com/v1/messages",
@@ -253,6 +253,14 @@ export class PhoneEvents {
       if (!info.recover) {
         this.state.upTo[info.page] = Math.max(this.state.upTo[info.page] ?? 0, info.upTo);
         delete this.state.fails[info.page];
+      }
+      // a #tag read as a box + word ("#taccuino" → "taccuino") is not a task
+      const tags = agenda.knownTags();
+      const tagOnly = [...found.todos, ...found.events].filter((x) => isOnlyTag(x.title, tags)).map((x) => x.title);
+      if (tagOnly.length) {
+        found.todos = found.todos.filter((x) => !isOnlyTag(x.title, tags));
+        found.events = found.events.filter((x) => !isOnlyTag(x.title, tags));
+        this.log(`${label}: «${tagOnly.join("», «")}» è un #tag, non un'attività.`);
       }
       if (!found.events.length && !found.todos.length && !found.ticks.length) {
         if (!info.recover) this.log(`${label}: nessuna attività nei tratti nuovi.`);

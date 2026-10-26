@@ -29,7 +29,7 @@ type EngineResult =
 
 /** Il motore del plugin (plugin/src/phone/engine.ts). Lo controllano i tipi del plugin, non quelli dell'app. */
 interface EngineModule {
-  readSettings(io: VaultIO): { apiKey?: string; pageIndex?: Record<string, { done?: number }> } | null;
+  readSettings(io: VaultIO): { apiKey?: string; relayMinutes?: number; pageIndex?: Record<string, { done?: number }> } | null;
   pageNeedsWork(settings: object, page: EnginePage): boolean;
   transcribePages(
     opts: {
@@ -141,6 +141,8 @@ export class PageNotes {
   private notBefore = 0;
   private idle: ReturnType<typeof setTimeout> | null = null;
   private told = new Set<string>();
+  /** Obsidian was open on the PC at the last check (to say it once, not every time). */
+  private pcOpen = false;
 
   constructor(
     private store: PageStore,
@@ -221,12 +223,20 @@ export class PageNotes {
       this.tellOnce("key", "Note di Obsidian: nel plugin Neo Pen manca la chiave di Claude.");
       return;
     }
-    // come il plugin sull'iPhone: con il PC acceso (visto negli ultimi 10 minuti) trascrive il PC
+    // Obsidian aperto sul PC (lo script lo sente ogni minuto finché è aperto): trascrive lui. Appena smette di farsi
+    // sentire (Obsidian chiuso, PC spento) le pagine le fa il telefono, da solo.
     const pc = await this.pcSeen();
-    if (pc && Date.now() - pc < 10 * 60_000) {
-      this.log("Note di Obsidian: il PC è acceso, le pagine le trascrive lui.");
+    const every = Math.max(1, settings.relayMinutes || 1) * 60_000;
+    const window = Math.max(3 * 60_000, every * 2 + 60_000);
+    if (pc && Date.now() - pc < window) {
+      if (!this.pcOpen) this.log("Note di Obsidian: Obsidian è aperto sul PC, le pagine le trascrive lui.");
+      this.pcOpen = true;
+      this.wanted = true;
+      this.notBefore = pc + window + 5_000;
       return;
     }
+    if (this.pcOpen) this.log("Note di Obsidian: Obsidian sul PC è chiuso, le pagine le trascrive il telefono.");
+    this.pcOpen = false;
     // the notes as they are now: afterwards the calendar follows what the transcription changed (agenda.followPen)
     await agenda.freshTasks();
     const r = await engine.transcribePages(

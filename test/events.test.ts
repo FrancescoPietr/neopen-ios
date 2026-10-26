@@ -56,3 +56,15 @@ test("ticked tasks are reported as done, not created", () => {
   assert.equal(r.events.length, 0);
   assert.deepEqual(r.todos, [{ title: "nuova", date: "" }]);
 });
+
+test("events: a #tag read as a task is recognised, and the author's tags go to Claude", async () => {
+  const { isOnlyTag, eventsRequest } = await import("../src/core/events");
+  const tags = ["task", "tasks", "taccuino", "cinema", "giochi"];
+  assert.equal(isOnlyTag("taccuino", tags), true);
+  assert.equal(isOnlyTag("#Taccuino", tags), true);
+  assert.equal(isOnlyTag("comprare taccuino nuovo", tags), false);
+  assert.equal(isOnlyTag("dentista", tags), false);
+  const body = JSON.parse(eventsRequest("AAAA", { width: 10, height: 10 }, Date.now(), "m", tags));
+  assert.match(body.messages[0].content[1].text, /#taccuino/);
+  assert.match(body.system, /TAGS ARE NOT TASKS/);
+});
