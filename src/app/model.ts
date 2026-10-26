@@ -113,6 +113,7 @@ class AppModel {
     if (this.started) return;
     this.started = true;
     this.uploader.log = (m) => this.write(m);
+    agenda.log = (m) => this.write(m);
     this.uploader.changed = () => this.emit();
     this.uploader.keepAlive = (name) => {
       const id = NeoPenBle.beginBackgroundTask(name);

@@ -227,6 +227,8 @@ export class PageNotes {
       this.log("Note di Obsidian: il PC è acceso, le pagine le trascrive lui.");
       return;
     }
+    // the notes as they are now: afterwards the calendar follows what the transcription changed (agenda.followPen)
+    await agenda.freshTasks();
     const r = await engine.transcribePages(
       {
         io,
@@ -246,6 +248,8 @@ export class PageNotes {
     }
     if (r.status === "ok") {
       this.log(`Note di Obsidian aggiornate (${r.pages.length === 1 ? "1 pagina" : `${r.pages.length} pagine`}).`);
+      // read again: an appointment struck through or changed on the paper is changed in the calendar too
+      await agenda.freshTasks();
       agenda.changedOutside();
       refreshOutputs(500);
     }

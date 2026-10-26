@@ -5,9 +5,10 @@ import { AppState } from "react-native";
 import NeoPenBle from "../../modules/neopen-ble";
 import { QuickAdd } from "../core/quickadd";
 import { DailyNotesConfig } from "../core/penInbox";
-import { sameTitle } from "../core/similar";
+import { looseTitle, sameTitle } from "../core/similar";
 import { DailyConfig, TaskEdit, appendTask, buildIndex, deleteTask, editTask, toggleTask } from "../core/taskStore";
-import { readText, writeText } from "./files";
+import { readJson, readText, writeJson, writeText } from "./files";
+import { FollowChange, PenTimed, diffPenTimed, penTimedTasks } from "../core/follow";
 import { VaultTask, ymd } from "../core/tasks";
 
 export interface CalEvent {
@@ -55,6 +56,8 @@ const writeAny = (path: string, text: string) => (path === APP_FILE ? writeText(
 export const isAppTask = (t: { file: string }) => t.file === APP_FILE;
 
 const toDate = (v: string | Date) => (v instanceof Date ? v : new Date(v));
+/** The last reading of the timed tasks written with the pen (to see what changed in the notes). */
+const FOLLOW_FILE = "penna-orari.json";
 
 class Agenda {
   private snap: AgendaSnapshot = { vaultName: null, tasks: [], loading: false, error: null, calendarAccess: "unknown", calendars: [], events: {}, version: 0, eventsEpoch: 0 };
@@ -145,6 +148,7 @@ class Agenda {
       for (const p of [...this.files.keys()]) if (!seen.has(p) && p !== APP_FILE) this.files.delete(p);
       this.rebuild(null);
       void this.syncDoneEvents();
+      this.followPen();
     } catch (e) {
       this.set({ loading: false, error: e instanceof Error ? e.message : String(e) });
     }
@@ -436,6 +440,84 @@ class Agenda {
     } catch (e) {
       this.set({ error: `Calendario: ${e instanceof Error ? e.message : String(e)}` });
     }
+  }
+
+  // ---------------------------------------------------------------- the calendar follows the notes
+
+  /** Where the app writes what it did by itself (the app's log). */
+  log: (m: string) => void = () => undefined;
+  private following: Promise<void> = Promise.resolve();
+
+  /**
+   * Like the Obsidian plugin did with Google Calendar: a task with a time written with the pen that disappears from the
+   * notes (struck through on the paper) takes its calendar event away with it; one whose date or time changes (the new
+   * one written beside the struck one) moves its event. Only the events the pen created ("Scritto con la penna").
+   */
+  private followPen(): void {
+    this.following = this.following.then(() => this.followPenNow()).catch(() => undefined);
+  }
+
+  private async followPenNow(): Promise<void> {
+    const files = [...this.files.entries()].filter(([p]) => p !== APP_FILE).map(([path, f]) => ({ path, text: f.text }));
+    if (!files.length) return;
+    const now = penTimedTasks(files, this.snap.tasks);
+    const prev = readJson<{ list: PenTimed[] | null }>(FOLLOW_FILE, { list: null }).list;
+    const changes = prev ? diffPenTimed(prev, now) : [];
+    if (changes.length) {
+      const p = await Cal.getCalendarPermissions();
+      // without the calendar: tried again later (the old reading is kept)
+      if (!p.granted) return;
+      for (const c of changes) await this.followChange(c, now);
+      this.dropEvents();
+    }
+    writeJson(FOLLOW_FILE, { list: now });
+  }
+
+  private async followChange(c: FollowChange, now: PenTimed[]): Promise<void> {
+    const at = (date: string, time: string) => {
+      const [y, m, d] = date.split("-").map(Number);
+      const [h, mi] = time.split(":").map(Number);
+      return new Date(y, m - 1, d, h, mi);
+    };
+    const cals = (await Cal.getCalendars(Cal.EntityTypes.EVENT)).filter((x) => x.allowsModifications).map((x) => x.id);
+    if (!cals.length) return;
+    const clean = (t: string | undefined) => (t ?? "").replace(/^\s*✓\s*/, "");
+    const penEvents = async (start: Date, title: string) => {
+      const day = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+      const list = await Cal.listEvents(cals, day, new Date(day.getTime() + 86_400_000));
+      const atTime = list.filter((e) => /^Scritto con la penna/.test(e.notes ?? "") && !e.allDay && toDate(e.startDate).getTime() === start.getTime());
+      const same = atTime.filter((e) => sameTitle(clean(e.title), title));
+      if (same.length) return same;
+      // Claude may have read the title a bit differently on the two passes ("prova n° 2" / "trovare n° 2"): the only
+      // pen event at that minute is it, if no task still in the notes at that minute is that event
+      const titles = [...new Set(atTime.map((e) => looseTitle(clean(e.title))))];
+      const day0 = ymd(start);
+      const hm = `${String(start.getHours()).padStart(2, "0")}:${String(start.getMinutes()).padStart(2, "0")}`;
+      const stillThere = now.filter((t) => t.date === day0 && t.time === hm);
+      if (titles.length === 1 && !stillThere.some((t) => sameTitle(t.title, titles[0]))) return atTime;
+      return [];
+    };
+    const from = at(c.date, c.time);
+    const hits = await penEvents(from, c.title);
+    if (!hits.length) return;
+    const when = (d: Date) => d.toLocaleString("it-IT", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+    if (c.kind === "delete") {
+      for (const h of hits) await (await Cal.ExpoCalendarEvent.get(h.id)).delete();
+      this.log(`«${c.title}» ${when(from)}: cancellata sulla carta → tolta anche dal calendario.`);
+      return;
+    }
+    const start = at(c.to.date, c.to.time);
+    const length = Math.max(15 * 60000, toDate(hits[0].endDate).getTime() - toDate(hits[0].startDate).getTime());
+    const endAt = c.to.end ? at(c.to.date, c.to.end) : null;
+    const end = endAt && endAt > start ? endAt : new Date(start.getTime() + length);
+    // the phone may have already put the new time in the calendar (it reads the new writing too): the old one goes
+    const already = await penEvents(start, c.to.title);
+    for (const h of hits) {
+      const ev = await Cal.ExpoCalendarEvent.get(h.id);
+      if (already.some((a) => a.calendarId === h.calendarId)) await ev.delete();
+      else await ev.update({ startDate: start, endDate: end });
+    }
+    this.log(`«${c.title}»: ${when(from)} → ${when(start)} (cambiato sulla carta, anche nel calendario).`);
   }
 
   /** The phone changed the vault or the calendar by itself (pen): lists read again if the app is showing them. */
