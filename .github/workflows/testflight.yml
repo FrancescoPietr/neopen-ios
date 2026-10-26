@@ -32,7 +32,15 @@ jobs:
       - name: Tests
         run: npm run typecheck && npm test
       - name: Build (on this Mac, signed with the credentials on EAS)
-        run: npx eas-cli@latest build --platform ios --profile production --local --non-interactive --output "$RUNNER_TEMP/NeoTransfer.ipa"
+        run: |
+          set -o pipefail
+          npx eas-cli@latest build --platform ios --profile production --local --non-interactive --output "$RUNNER_TEMP/NeoTransfer.ipa" 2>&1 | tee build.log
+      - name: Why it failed
+        if: failure()
+        run: |
+          enc() { cut -c1-300 | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}'; }
+          grep -iE "error|credential|provisioning|profile|failed" build.log | grep -v "^\s*$" | tail -25 | while IFS= read -r l; do echo "::error::$(echo "$l" | cut -c1-500)"; done
+          echo "::notice title=Last lines::$(tail -40 build.log | enc)"
       - name: Send to TestFlight
         run: npx eas-cli@latest submit --platform ios --profile production --path "$RUNNER_TEMP/NeoTransfer.ipa" --non-interactive
       - name: Keep the app file
