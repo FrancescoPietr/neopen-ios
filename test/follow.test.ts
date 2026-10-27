@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { diffPenTimed, penTimedTasks } from "../src/core/follow";
+import { diffPenTimed, isPenAppointment, penBlockLines, penTimedTasks } from "../src/core/follow";
 import { parseTasks } from "../src/core/tasks";
 
 const daily = (body: string) => `# venerdì\n\n### Attività\n\n<!-- neopen:testo:3_27_746_14 -->\n${body}\n<!-- /neopen:testo:3_27_746_14 -->\n- [ ] 18:00 fuori dal blocco\n`;
@@ -52,4 +52,14 @@ test("follow: a task written before gets a time beside it → it becomes an appo
   assert.deepEqual(mid.map((t) => [t.title, t.time]), [["Andare mangiare", "12:00"], ["guardare minuto 1:26 del video", null]]);
   // then struck through on the paper: the event goes
   assert.deepEqual(diffPenTimed(after, read(daily("- [ ] 18:00 palestra"))), [{ kind: "delete", title: "Andare a mangiare", date: "2026-10-23", time: "12:00" }]);
+});
+
+test("follow: a timed task written with the pen is an appointment (shown as an event, not among the tasks)", () => {
+  const text = daily("- [ ] 17:00 Cena\n- [ ] calcio");
+  const path = "Daily/2026-10-23.md";
+  const tasks = parseTasks(text, { path, dailyDate: "2026-10-23" });
+  const blocks = penBlockLines([{ path, text }]);
+  assert.deepEqual(tasks.filter((t) => isPenAppointment(t, blocks)).map((t) => t.title), ["Cena"]);
+  // "18:00 fuori dal blocco" is written in Obsidian: it stays a task
+  assert.ok(tasks.some((t) => t.title === "fuori dal blocco" && !isPenAppointment(t, blocks)));
 });

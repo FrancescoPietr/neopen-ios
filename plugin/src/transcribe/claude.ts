@@ -541,3 +541,64 @@ function arrowsOf(parsed: any): { title: string; page: number }[] {
   if (!out.length && Number(parsed?.continues_on_page) > 0) out.push({ title: "", page: Math.floor(Number(parsed.continues_on_page)) });
   return out;
 }
+
+/**
+ * Una spunta misurata dai tratti su una casella: quale task è? L'immagine è solo quella riga (la scritta in grigio,
+ * la spunta in nero); Claude sceglie tra i task ancora da fare della pagina. "" se nessuno corrisponde.
+ */
+export async function readTickedTask(opts: {
+  apiKey: string;
+  apiBaseUrl?: string;
+  model: string;
+  pngBase64: string;
+  candidates: string[];
+}): Promise<{ task: string; cost: number }> {
+  const list = opts.candidates.map((c, i) => `${i + 1}. ${c}`).join("\n");
+  const body = {
+    model: opts.model,
+    max_tokens: 300,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "image", source: { type: "base64", media_type: "image/png", data: opts.pngBase64 } },
+          {
+            type: "text",
+            text:
+              "This image is one line of a handwritten page: a task box with the task text after it, in GRAY (already transcribed), and a new BLACK tick or X on the box. " +
+              "Which of these tasks is the one written on this line? Read the gray handwriting after the box and choose the task that best matches it. " +
+              "The task text was transcribed earlier and can differ from the handwriting: misread words, words missing (e.g. struck-through words or a time left out), a time or date added. Match on the words that are there.\n" +
+              list +
+              '\nAnswer with its number in "n" (0 only if none of them can be this line).',
+          },
+        ],
+      },
+    ],
+    output_config: {
+      format: {
+        type: "json_schema",
+        schema: { type: "object", properties: { n: { type: "integer" } }, required: ["n"], additionalProperties: false },
+      },
+    },
+  };
+  const res = await requestUrl({
+    url: `${(opts.apiBaseUrl || "https://api.anthropic.com").replace(/\/+$/, "")}/v1/messages`,
+    method: "POST",
+    contentType: "application/json",
+    headers: { "x-api-key": opts.apiKey, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify(body),
+    throw: false,
+  });
+  if (res.status >= 400) throw new Error(`API Claude ${res.status}`);
+  const data = res.json;
+  const text = (data?.content ?? []).find((c: any) => c.type === "text")?.text ?? "{}";
+  const n = Number(JSON.parse(text).n) || 0;
+  const u = data?.usage ?? {};
+  const cost = estimateCost(opts.model, {
+    inputTokens: Number(u.input_tokens) || 0,
+    outputTokens: Number(u.output_tokens) || 0,
+    cacheReadTokens: Number(u.cache_read_input_tokens) || 0,
+    cacheWriteTokens: Number(u.cache_creation_input_tokens) || 0,
+  });
+  return { task: n >= 1 && n <= opts.candidates.length ? opts.candidates[n - 1] : "", cost };
+}

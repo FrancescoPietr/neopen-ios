@@ -128,6 +128,8 @@ async function updateLive(tasks: VaultTask[], events: CalEvent[], onScreen: bool
 async function run(onScreen: boolean): Promise<void> {
   let tasks = await agenda.freshTasks();
   if (await applyWidgetToggles(tasks)) tasks = await agenda.freshTasks();
+  // the appointments written with the pen are events (in the calendar), not tasks: shown once, as events
+  tasks = agenda.visible(tasks);
   // last month, this one and the next (the widget's month can be moved with the arrows)
   const n = new Date();
   const from = new Date(n.getFullYear(), n.getMonth() - 1, 1);

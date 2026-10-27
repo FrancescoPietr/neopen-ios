@@ -24,8 +24,8 @@ export type FollowChange =
 
 const BLOCK = /^<!--\s*(\/?)neopen:testo:([^\s>]+)\s*-->\s*$/;
 
-/** Tasks with a date and a time inside the pen's blocks (copies in the plugin's folders, e.g. _cestino, left out). */
-export function penTimedTasks(files: { path: string; text: string }[], tasks: VaultTask[]): PenTimed[] {
+/** The lines inside the pen's blocks, by file (copies in the plugin's folders, e.g. _cestino, left out). */
+export function penBlockLines(files: { path: string; text: string }[]): Map<string, Set<number>> {
   const inBlock = new Map<string, Set<number>>();
   for (const f of files) {
     if (f.path.split("/").some((part) => part.startsWith("_"))) continue;
@@ -40,11 +40,19 @@ export function penTimedTasks(files: { path: string; text: string }[], tasks: Va
     });
     if (set.size) inBlock.set(f.path, set);
   }
+  return inBlock;
+}
+
+/** A task written with the pen with a date and a time: an appointment (it lives in the calendar, not among the tasks). */
+export const isPenAppointment = (t: VaultTask, inBlock: Map<string, Set<number>>) => !!(t.date && t.time && !t.recurrence && inBlock.get(t.file)?.has(t.line));
+
+/** Tasks with a date and a time inside the pen's blocks. */
+export function penTimedTasks(files: { path: string; text: string }[], tasks: VaultTask[]): PenTimed[] {
+  const inBlock = penBlockLines(files);
   const seen = new Set<string>();
   const out: PenTimed[] = [];
   for (const t of tasks) {
-    if (!t.date || !t.time || t.recurrence) continue;
-    if (!inBlock.get(t.file)?.has(t.line)) continue;
+    if (!t.date || !t.time || !isPenAppointment(t, inBlock)) continue;
     const k = keyOf(t.title, t.date, t.time);
     if (seen.has(k)) continue;
     seen.add(k);

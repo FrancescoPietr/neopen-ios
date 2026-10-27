@@ -8,7 +8,8 @@ import { adoptPhoneTasks } from "../notes/phoneTasks";
 import { expandBounds, renderStrokesPng } from "../render/png";
 import { PageStore } from "../store/PageStore";
 import { PageKey, Stroke, pageId } from "../types";
-import { HandwritingRef, TranscribedLine, parseLine, transcribeWithClaude } from "./claude";
+import { HandwritingRef, TranscribedLine, parseLine, readTickedTask, transcribeWithClaude } from "./claude";
+import { findTaskBoxes, findTicks, taskLines } from "./ticks";
 import { svgToPngBase64 } from "../views/handwriting";
 import { alphabetScheme, resolveLang } from "./samples";
 import { Canvas, DrawingSpec, PlacedLabel, boxToNcode, canvasFor, drawingLayout, drawingSvg, formatDrawingBlock, isConnector, labelTags, linesAfterBlock, moveAnchor, anchorOf, parseDrawingBlock, placeDrawings, addOrphanLabels, normText, placeLabels } from "./drawings";
@@ -619,7 +620,15 @@ export class Transcriber {
         : expandBounds(newBounds, { x: 14, top: 12, bottom: 4 }, pageBounds);
     }
     // sottolineature, doppie sottolineature e cancellature misurate dai tratti (le cancellature vanno in rosso)
-    const report = underlineReport(toDo, visible);
+    // spunte misurate dai tratti: una V o una X su una casella di un task già trascritto (non una cancellatura,
+    // non scritta nuova)
+    const boxes = hasContext ? findTaskBoxes(visible.filter((st) => !newSet.has(st.t)), visible) : [];
+    const ticks = findTicks(toDo, boxes);
+    const tickSet = new Set(ticks.flatMap((k) => k.strokes));
+    const report = underlineReport(
+      toDo.filter((st) => !tickSet.has(st)),
+      visible
+    );
     const struck = new Set(report.strikes);
     const red = new Set(report.red);
     // le parole nuove cancellate (e le loro linee) non arrivano proprio a Claude: niente da trascrivere per sbaglio
@@ -697,8 +706,14 @@ export class Transcriber {
           })
           .join("; ")}. NEW black writing that belongs to one of these (a name, a #tag beside it, or a note joined to it by an arrow or a line, even several lines or a list), and NEW black strokes that add a part or an arrow to one of these drawings: add a drawings entry with existing = its number, box = the rectangle around that drawing including its new strokes, labels = only the new writing, one label per note (its lines joined with "\\n" as on paper; never mix two notes written side by side); do not write them in lines and add no "[[drawing N]]" for it.`
       : "";
+    const pxBox = (b: { x0: number; y0: number; x1: number; y1: number }) =>
+      `[${Math.round((b.x0 - png.ox) * png.scale)}, ${Math.round((b.y0 - png.oy) * png.scale)}, ${Math.round((b.x1 - png.ox) * png.scale)}, ${Math.round((b.y1 - png.oy) * png.scale)}]`;
+    const tickNote = ticks.length
+      ? ` Measured from the pen strokes: ${ticks.length === 1 ? "1 new tick is" : `${ticks.length} new ticks are`} on task boxes (${ticks.map((k) => `box at ${pxBox(k.box)}`).join("; ")}). Each one CHECKS the task written to the right of that box on the same line: put each of those tasks in checked_tasks, copied exactly from the already transcribed text. A tick is never a strike-through (never deleted_text) and never new text.`
+      : "";
     const hint =
       report.hint +
+      tickNote +
       arrowNote +
       existingNote +
       (cont
@@ -748,7 +763,7 @@ export class Transcriber {
     const nothing = !result.lines.some((l) => l.text.trim()) && !result.page_title && !result.corrections.length && !result.new_titles.length;
     // 0) niente di niente (né righe, né scritte di disegni, né spunte o cancellature) con tanta scrittura nuova:
     //    la scrittura non deve andare persa, si riprova
-    const writing = toDo.filter((st) => !struck.has(st) && !gone.has(st)).length;
+    const writing = toDo.filter((st) => !struck.has(st) && !gone.has(st) && !tickSet.has(st)).length;
     const silent =
       nothing &&
       !result.drawings.some((d) => d.labels.length) &&
@@ -777,6 +792,13 @@ export class Transcriber {
         retry = `IMPORTANT: the pen strokes show ${want} twice-underlined titles on this page, but your answer has only ${out}${got.length ? ` (${got.map((t) => `"${t}"`).join(", ")})` : ""}. Look again for the missing one${want - out > 1 ? "s" : ""} (${report.doubles.some((d) => d.top) ? "one is at the very top of the page, even if it is short" : "each has two lines under it"}) and write ${cont ? 'each title as "== title"' : 'the top one as page_title and the others as "== title"'} in lines, in order.`;
         this.log(`Titoli con doppia sottolineatura: ${want} sulla pagina, ${out} nella risposta. Riprovo la trascrizione…`);
       }
+    }
+    // risposte "con la freccia" ma nessuna freccia misurata, su una pagina con un disegno: le linee del disegno
+    // (raggi, onde, frecce interne) sono state prese per frecce. Le scritte accanto al disegno sono testo accanto.
+    const noArrows = () => !arrows.length && result.replies.length > 0 && result.drawings.some((d) => !(d as { existing?: number }).existing);
+    if (!retry && noArrows()) {
+      retry = `IMPORTANT: measured from the pen strokes there are NO reply arrows on this page: the lines of the drawing are part of the drawing. replies must be []: write every piece of writing in lines, in reading order; lines written beside a drawing go right after "[[drawing N]]" (set text_side and lines_beside).`;
+      this.log(`Risposte con la freccia ma nessuna freccia sulla carta (le linee del disegno?): riprovo la trascrizione…`);
     }
     if (retry) {
       const first = result;
@@ -808,6 +830,66 @@ export class Transcriber {
         result.page_tag = "";
         result.page_title = "";
       }
+    }
+
+    // ogni spunta misurata: quale task è, letto sulla sua riga (scelto tra i task ancora da fare della pagina), così
+    // la spunta non si perde anche se nella pagina intera Claude non l'ha vista
+    if (ticks.length && pageBounds) {
+      const open: string[] = [];
+      for (const sg of this.router.segmentsOf(key))
+        for (const t of taskLines([readBlock(await this.app.vault.read(sg.file), sg.blockId)])) if (!t.done && !open.includes(t.text)) open.push(t.text);
+      const near = (a: string, b: string) => {
+        const x = looseText(a);
+        const y = looseText(b);
+        return !!x && !!y && (x === y || x.includes(y) || y.includes(x));
+      };
+      for (const k of ticks) {
+        if (!open.length) break;
+        const size = Math.max(k.box.x1 - k.box.x0, k.box.y1 - k.box.y0);
+        const tb = strokeBounds(k.strokes)!;
+        const row = {
+          minX: Math.min(k.box.x0, tb.minX) - 0.5,
+          maxX: pageBounds.maxX,
+          // la riga della casella (le lettere che scendono comprese), non quella sopra
+          minY: Math.max(Math.min(k.box.y0 - 0.25 * size, tb.minY), k.box.y0 - 0.6 * size),
+          maxY: Math.max(k.box.y1 + 0.6 * size, Math.min(tb.maxY, k.box.y1 + 1.2 * size)),
+        };
+        const crop = renderStrokesPng(
+          page.strokes.filter((st) => !gone.has(st)),
+          (st) => k.strokes.includes(st),
+          this.maxForce,
+          row
+        );
+        if (!crop) continue;
+        try {
+          const r = await readTickedTask({ apiKey: s.apiKey, apiBaseUrl: s.apiBaseUrl, model: s.model, pngBase64: crop.base64, candidates: open });
+          result.usage.cost += r.cost;
+          if (!r.task) {
+            this.log(`Spunta sulla casella ${k.index + 1} della pagina: sulla riga non riconosco un task da fare.`);
+            continue;
+          }
+          open.splice(open.indexOf(r.task), 1);
+          if (result.checked_tasks.some((c) => near(c, r.task))) continue;
+          result.checked_tasks.push(r.task);
+          this.log(`Spunta su «${r.task}» (misurata sulla casella, Claude nella pagina intera non l'aveva vista).`);
+        } catch (e) {
+          this.log(`Spunta sulla casella ${k.index + 1}: ${(e as Error)?.message ?? e}`);
+        }
+      }
+      // una spunta non cancella mai il suo task
+      result.deleted_text = result.deleted_text.filter((d) => !result.checked_tasks.some((c) => near(c, d)));
+    }
+
+    // se insiste: le "risposte" restano testo, sotto la riga a cui le collegava (o in fondo)
+    if (noArrows()) {
+      for (const r of result.replies) {
+        const at = result.lines.findIndex((l) => looseText(l.text) && looseText(l.text) === looseText(r.to));
+        const line: TranscribedLine = { kind: "text", text: r.text, checked: false, due: "" };
+        if (at >= 0) result.lines.splice(at + 1, 0, line);
+        else result.lines.push(line);
+      }
+      this.log(`Nessuna freccia sulla carta: ${result.replies.length === 1 ? "la «risposta» resta testo" : `le ${result.replies.length} «risposte» restano testo`}.`);
+      result.replies = [];
     }
 
     this.onSpend(result.usage.cost);
@@ -1004,7 +1086,15 @@ export class Transcriber {
     const info = { pageTag: result.page_tag, title: result.page_title || undefined, firstLine, created: page.created };
     /** Titolo riconosciuto ma la nota non si può rinominare: va in testa al testo come intestazione. */
     let titleAsHeading = "";
-    if (!routed) {
+    // La nota della pagina non c'è (mai fatta, o cancellata da te) e in cima alla pagina non c'è niente da metterci
+    // (solo spunte, cancellature, testo sotto un titolo a metà pagina): non si crea una nota «Quaderno N - pagina M»
+    // vuota, si lavora nelle altre parti della pagina.
+    const homeEmpty = !groups[0].lines.some((l) => l.text.trim()) && !result.page_title && !result.page_tag;
+    const otherParts = routed ? [] : this.router.segmentsOf(key);
+    if (!routed && homeEmpty && otherParts.length) {
+      routed = otherParts[0];
+      this.log(`Pagina ${key.page}: niente da scrivere nella nota della pagina, lavoro solo nelle sue parti (${otherParts.map((p) => `"${p.file.basename}"`).join(", ")}).`);
+    } else if (!routed) {
       routed = await this.router.ensure(key, info);
       if (result.page_title) this.log(`Titolo riconosciuto: "${result.page_title}".`);
     } else {

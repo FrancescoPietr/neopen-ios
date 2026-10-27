@@ -8,7 +8,7 @@ import { DailyNotesConfig } from "../core/penInbox";
 import { looseTitle, sameTitle } from "../core/similar";
 import { DailyConfig, TaskEdit, appendTask, buildIndex, deleteTask, editTask, toggleTask } from "../core/taskStore";
 import { readJson, readText, writeJson, writeText } from "./files";
-import { FollowChange, PenTimed, diffPenTimed, penTimedTasks } from "../core/follow";
+import { FollowChange, PenTimed, diffPenTimed, isPenAppointment, penBlockLines, penTimedTasks } from "../core/follow";
 import { VaultTask, ymd } from "../core/tasks";
 
 export interface CalEvent {
@@ -32,6 +32,10 @@ export interface CalInfo {
 
 export interface AgendaSnapshot {
   vaultName: string | null;
+  /**
+   * The tasks to show. The tasks written with the pen with a date and a time are appointments: they live in the
+   * calendar (as events), not among the tasks (as with the plugin and Google Calendar).
+   */
   tasks: VaultTask[];
   loading: boolean;
   error: string | null;
@@ -63,6 +67,8 @@ class Agenda {
   private snap: AgendaSnapshot = { vaultName: null, tasks: [], loading: false, error: null, calendarAccess: "unknown", calendars: [], events: {}, version: 0, eventsEpoch: 0 };
   private listeners = new Set<() => void>();
   private files = new Map<string, { mtime: number; text: string }>();
+  /** All the tasks of the vault, appointments written with the pen included. */
+  private all: VaultTask[] = [];
   private daily: DailyConfig = { folder: "Daily", format: "YYYY-MM-DD" };
   private template = "";
   private loadedRanges: [number, number][] = [];
@@ -156,11 +162,16 @@ class Agenda {
   }
 
   private rebuild(error: string | null): void {
-    const tasks = buildIndex(
-      [...this.files.entries()].map(([path, f]) => ({ path, text: f.text })),
-      this.daily
-    );
-    this.set({ tasks, loading: false, error });
+    const files = [...this.files.entries()].map(([path, f]) => ({ path, text: f.text }));
+    this.all = buildIndex(files, this.daily);
+    const blocks = penBlockLines(files.filter((f) => f.path !== APP_FILE));
+    this.set({ tasks: this.all.filter((t) => !isPenAppointment(t, blocks)), loading: false, error });
+  }
+
+  /** The tasks to show (without the appointments written with the pen, which are in the calendar). */
+  visible(tasks: VaultTask[]): VaultTask[] {
+    const shown = new Set(this.snap.tasks.map((t) => t.id));
+    return tasks === this.all ? this.snap.tasks : tasks.filter((t) => shown.has(t.id));
   }
 
   /** Applies an edit to a file and writes it into the vault. */
@@ -194,7 +205,7 @@ class Agenda {
     return ok;
   };
   edit = (t: VaultTask, e: TaskEdit) => this.change(t.file, (text) => (text === null ? null : editTask(text, t, e)));
-  remove = (t: VaultTask) => this.change(t.file, (text) => (text === null ? null : deleteTask(text, t, this.snap.tasks)));
+  remove = (t: VaultTask) => this.change(t.file, (text) => (text === null ? null : deleteTask(text, t, this.all)));
 
   /** New task added in the app: it stays in the app (not in the vault). */
   addTask = (q: QuickAdd) => this.change(APP_FILE, (text) => appendTask(text, { ...q, labels: q.labels }, "Attività"));
@@ -209,7 +220,7 @@ class Agenda {
   /** The vault read again (only what changed), with its tasks: to check a pen task is not there already. */
   async freshTasks(): Promise<VaultTask[]> {
     await this.refresh();
-    return this.snap.tasks;
+    return this.all;
   }
 
   /** Daily notes settings of the vault (from the last read). */
@@ -280,7 +291,7 @@ class Agenda {
     if (this.snap.calendarAccess !== "granted") return;
     const from = ymd(new Date(Date.now() - 14 * 86_400_000));
     const to = ymd(new Date(Date.now() + 31 * 86_400_000));
-    for (const t of this.snap.tasks) {
+    for (const t of this.all) {
       if (!t.done || !t.time || !t.date || t.date < from || t.date > to) continue;
       const key = `${t.file}|${t.title}|${t.date}|${t.time}`;
       if (this.doneSynced.has(key)) continue;
@@ -489,7 +500,7 @@ class Agenda {
   private async followPenNow(): Promise<void> {
     const files = [...this.files.entries()].filter(([p]) => p !== APP_FILE).map(([path, f]) => ({ path, text: f.text }));
     if (!files.length) return;
-    const now = penTimedTasks(files, this.snap.tasks);
+    const now = penTimedTasks(files, this.all);
     const prev = readJson<{ list: PenTimed[] | null }>(FOLLOW_FILE, { list: null }).list;
     // the first reading only sets the starting point (nothing already in the notes is created again)
     const changes = prev ? diffPenTimed(prev, now, 6, ymd(new Date())) : [];
@@ -617,8 +628,8 @@ class Agenda {
 export const agenda = new Agenda();
 
 /**
- * Events of a day without the doubles of timed tasks: a task with a time written with the pen is both in the vault
- * (transcribed by Obsidian) and in the calendar (put there by the phone); the app shows it once, as the task.
+ * Events of a day without the doubles of timed tasks shown as tasks (a timed task written in Obsidian that also has an
+ * event). The appointments written with the pen are not among the tasks: they show as events.
  */
 export function visibleEvents(a: AgendaSnapshot, day: string): CalEvent[] {
   // the same event in several calendars (e.g. written by the pen in each chosen one): shown once
