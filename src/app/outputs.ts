@@ -61,13 +61,12 @@ function writeWidgets(tasks: VaultTask[], events: CalEvent[]): void {
   const today = ymd(new Date());
   const horizon = ymd(new Date(Date.now() + 15 * 86_400_000));
   const monthStart = ymd(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
-  const wanted = tasks.filter(
-    (t) => (!t.done && (!t.date || t.date <= horizon)) || (t.done && t.doneDate === today) || (t.date && t.date >= monthStart && t.date <= horizon)
-  );
+  // quello che è già fatto (attività spuntate, impegni con ✓) non compare: nel widget resta solo quello da fare
+  const wanted = tasks.filter((t) => !t.done && (!t.date || t.date <= horizon || (t.date >= monthStart && t.date <= horizon)));
   const data = {
     updated: Date.now(),
     look: look(),
-    events: uniqueEvents(events).map((e) => ({
+    events: uniqueEvents(events.filter((e) => !/^\s*✓/.test(e.title))).map((e) => ({
       key: eventKey(e),
       title: e.title.replace(/^\s*✓\s*/, ""),
       start: e.start.getTime(),

@@ -126,6 +126,11 @@ export interface NeoPenSettings {
   titleFixes: Record<string, string>;
   /** id pagina → parti della pagina (una nota per ogni titolo con doppia sottolineatura), in ordine. */
   segments: Record<string, string[]>;
+  /**
+   * Dove sta sulla carta ogni riga trascritta (per pagina, unità Ncode): una modifica scritta dopo su quella riga
+   * cambia proprio quella riga della nota.
+   */
+  lineRows?: Record<string, { bid: string; text: string; y: number; x0: number; x1: number }[]>;
   /** id pagina → id della pagina di cui è la continuazione (freccia → numero). */
   continuations: Record<string, string>;
   /** id pagina → quanti tratti aveva nella penna e fin dove è trascritta (i tratti stanno nella penna). */

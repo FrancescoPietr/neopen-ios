@@ -53,6 +53,11 @@ export class NoteRouter {
     private onGroupChanged: (rootId: string) => void = () => undefined
   ) {}
 
+  /** Salva le impostazioni (stato delle pagine). */
+  persist(): Promise<void> {
+    return this.save();
+  }
+
   /** Nota già assegnata alla pagina (o null). Riconosce anche le note create dalle versioni 0.2. */
   /** La nota sta nel cestino del plugin (non va mai riusata). */
   inBin(path: string): boolean {

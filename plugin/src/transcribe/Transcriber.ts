@@ -10,7 +10,7 @@ import { PageStore } from "../store/PageStore";
 import { PageKey, Stroke, pageId } from "../types";
 import { HandwritingRef, TranscribedLine, keepTags, normalizeTaskLine, parseLine, readRowEdit, readTickedTask, transcribeWithClaude } from "./claude";
 import { planRowEdits } from "./rowEdits";
-import { findTaskBoxes, findTicks, taskLines, writtenRows } from "./ticks";
+import { findTaskBoxes, findTicks, letterHeight, taskLines, writtenRows } from "./ticks";
 import { svgToPngBase64 } from "../views/handwriting";
 import { alphabetScheme, resolveLang } from "./samples";
 import { Canvas, DrawingSpec, PlacedLabel, boxToNcode, canvasFor, drawingLayout, drawingSvg, formatDrawingBlock, isConnector, labelTags, linesAfterBlock, moveAnchor, anchorOf, parseDrawingBlock, placeDrawings, addOrphanLabels, normText, placeLabels } from "./drawings";
@@ -18,7 +18,7 @@ import { escapeLabelLine } from "./drawings";
 import { DrawingRecord, findExtensions, growInto, reconstructRecord, recordPathOf, sameCanvas } from "./drawingUpdate";
 import { addReplyInBlock, replaceLineInBlock, hasBlock, stripLegacyPageSections, BLOCK_END, BLOCK_START, checkTasksInBlock, deleteTextInBlock, linesToMarkdown, readBlock, removeLineInBlock, writeIntoBlock } from "./noteBlock";
 import { strokeBounds } from "../render/svg";
-import { classifyLines, findReplyArrows, findStrikes, underlineReport } from "./lineHint";
+import { classifyLines, findReplyArrows, findStrikes, struckStrokes, underlineReport } from "./lineHint";
 
 export interface TranscriberSettings {
   apiKey: string;
@@ -38,6 +38,8 @@ export interface TranscriberSettings {
   handwritingMax?: number;
   /** Lingua delle frasi di riferimento ("auto" = quella di Obsidian). */
   handwritingLang?: string;
+  /** Dove sta sulla carta ogni riga trascritta (lo stesso oggetto delle impostazioni del plugin: si salva con loro). */
+  lineRows?: Record<string, { bid: string; text: string; y: number; x0: number; x1: number; inferred?: boolean }[]>;
 }
 
 /** Al massimo tanti campioni della calligrafia per chiamata (ognuno è un'immagine in più, anche se in cache). */
@@ -561,6 +563,42 @@ export class Transcriber {
     }
   }
 
+  /** Dove sta sulla carta ogni riga appena scritta nella nota (dai rettangoli delle righe dati da Claude). */
+  private recordRows(pid: string, bid: string, lines: TranscribedLine[], png: { ox: number; oy: number; scale: number }): void {
+    const rows = this.settings().lineRows;
+    if (!rows) return;
+    const list = (rows[pid] = rows[pid] ?? []);
+    for (const l of lines) {
+      if (!l.box || l.kind === "newnote") continue;
+      const b = boxToNcode(l.box, png);
+      const text = linesToMarkdown([l]).trim();
+      if (!b || !text || text.startsWith("```")) continue;
+      const y = (b.minY + b.maxY) / 2;
+      for (let i = list.length - 1; i >= 0; i--) if (Math.abs(list[i].y - y) < 0.5 && list[i].x0 < b.maxX && b.minX < list[i].x1) list.splice(i, 1);
+      list.push({ bid, text, y, x0: b.minX, x1: b.maxX, ...(l.inferredDue ? { inferred: true } : {}) });
+    }
+  }
+
+  /** Una riga della nota cambiata (o tolta, `to` vuoto): si aggiorna anche la sua posizione sulla carta. */
+  private renameRow(pid: string, from: string, to: string): void {
+    const list = this.settings().lineRows?.[pid];
+    if (!list) return;
+    const n = (t: string) => looseText(t.replace(/^\s*- \[[ xX]\]\s*/, "").replace(/^\s*-\s+/, ""));
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (n(list[i].text) !== n(from)) continue;
+      if (to.trim()) list[i].text = to.trim();
+      else list.splice(i, 1);
+    }
+  }
+
+  /** La riga della nota che sta sulla carta all'altezza `y` (registrata quando è stata trascritta), se si sa. */
+  private rowAt(pid: string, y: number, x0: number, x1: number, H: number) {
+    const list = this.settings().lineRows?.[pid] ?? [];
+    return list
+      .filter((r) => Math.abs(r.y - y) <= 0.8 * H && r.x0 < x1 + H && x0 - H < r.x1)
+      .sort((a, b) => Math.abs(a.y - y) - Math.abs(b.y - y))[0];
+  }
+
   /**
    * Le righe già trascritte che la scrittura nuova cambia (vedi rowEdits.ts): per ognuna un ritaglio della riga e la
    * riga della nota aggiornata. Restituisce i tratti nuovi sistemati così (il resto va alla trascrizione normale).
@@ -570,10 +608,11 @@ export class Transcriber {
     const s = this.settings();
     const visible = strokes.filter((st) => st.tip !== 1 && st.pts.length >= 3);
     const old = visible.filter((st) => st.tx);
-    const ticks = new Set(findTicks(toDo, findTaskBoxes(old, visible)).flatMap((k) => k.strokes));
+    const oldBoxes = findTaskBoxes(old, visible);
+    const ticks = new Set(findTicks(toDo, oldBoxes).flatMap((k) => k.strokes));
     const fresh = toDo.filter((st) => !ticks.has(st));
     if (!fresh.length) return handled;
-    const edits = planRowEdits(fresh, findStrikes(fresh, visible), old, visible);
+    const edits = planRowEdits(fresh, findStrikes(fresh, visible), old, visible, oldBoxes);
     if (!edits.length) return handled;
     // le righe della nota per questa pagina (testo, task, titoli: non i blocchi dei disegni)
     const lines: { text: string; seg: RoutedNote }[] = [];
@@ -592,6 +631,7 @@ export class Transcriber {
     if (!lines.length) return handled;
     const writtenAt = Math.min(...fresh.map((st) => st.t).filter((t) => t > 1_000_000_000_000));
     const today = new Date(Number.isFinite(writtenAt) ? writtenAt : Date.now()).toLocaleDateString("sv-SE");
+    const H = letterHeight(visible);
     for (const e of edits) {
       const black = new Set<Stroke>([...e.strikes, ...e.added]);
       const red = new Set<Stroke>(e.strikes);
@@ -608,19 +648,94 @@ export class Transcriber {
         (st) => red.has(st)
       );
       if (!png) continue;
+      // quale riga della nota è: si sa dalla posizione registrata quando è stata trascritta; se no la sceglie Claude
+      const pid = pageId(key);
+      const known = this.rowAt(pid, e.row.yc, e.row.x0, e.row.x1, H);
+      const norm = (t: string) => looseText(t.replace(/^\s*- \[[ xX]\]\s*/, "").replace(/^\s*-\s+/, ""));
+      const knownLine = known ? lines.find((l) => l.seg.blockId === known.bid && norm(l.text) === norm(known.text)) : undefined;
       try {
-        const r = await readRowEdit({ apiKey: s.apiKey, apiBaseUrl: s.apiBaseUrl, model: s.model, pngBase64: png.base64, lines: lines.map((l) => l.text), today, vocabulary: s.vocabulary });
+        const r = await readRowEdit({
+          apiKey: s.apiKey,
+          apiBaseUrl: s.apiBaseUrl,
+          model: s.model,
+          pngBase64: png.base64,
+          lines: knownLine ? [knownLine.text] : lines.map((l) => l.text),
+          today: `${today} (${new Date(`${today}T12:00:00`).toLocaleDateString("it-IT", { weekday: "long" })})`,
+          vocabulary: s.vocabulary,
+        });
         this.onSpend(r.cost);
+        if (knownLine && (r.line || r.remove)) r.n = 1;
         if (!r.n || (!r.remove && !r.line)) {
           this.log(`Pagina ${key.page}: una modifica su una riga già scritta (${e.why.join(", ")}) ma non trovo la riga nella nota: la trascrivo come testo nuovo.`);
           continue;
         }
-        const target = lines[r.n - 1];
+        const target = knownLine ?? lines[r.n - 1];
         const indent = /^\s*/.exec(target.text)![0];
-        const next = r.remove ? "" : indent + keepTags(target.text, normalizeTaskLine(r.line.replace(/^\s+/, "")));
+        // la riga sparisce solo se le cancellature coprono davvero le sue parole (non solo l'orario o una parola)
+        if (r.remove) {
+          const boxSet = new Set(findTaskBoxes(e.old, visible).flatMap((b) => b.strokes));
+          const words = e.old.filter((st) => !boxSet.has(st));
+          const struck = new Set(struckStrokes(e.strikes, visible));
+          const covered = words.length ? words.filter((st) => struck.has(st)).length / words.length : 0;
+          if (covered < 0.75) {
+            this.log(`Pagina ${key.page}: la cancellatura copre solo una parte della riga «${target.text.trim()}»: la riga resta.`);
+            if (!r.line) continue;
+            r.remove = false;
+          }
+        }
+        let fixed = r.remove ? "" : keepTags(target.text, normalizeTaskLine(r.line.replace(/^\s+/, "")));
+        const words = (t: string) =>
+          looseText(
+            t
+              .replace(/^\s*- \[[ xX]\]\s*/, "")
+              .replace(/^\s*-\s+/, "")
+              .replace(/\s*📅.*$/, "")
+              .replace(/(?:^|\s)(?:alle|ore|dalle)?\s*\d{1,2}[:.]\d{2}(?:\s*-\s*\d{1,2}[:.]\d{2})?(?=\s|$)/gi, " ")
+              .replace(/(?:^|\s)(?:oggi|domani|dopodomani)(?=\s|$)/gi, " ")
+          );
+        // senza cancellature le parole della riga restano tutte (si può solo aggiungere)
+        if (!r.remove && !e.strikes.length && !words(fixed).includes(words(target.text))) {
+          this.log(`Pagina ${key.page}: la riga «${target.text.trim()}» riletta perdeva parole («${fixed}»): la lascio com'è.`);
+          continue;
+        }
+        if (!r.remove && !words(fixed)) {
+          this.log(`Pagina ${key.page}: la riga «${target.text.trim()}» riletta restava vuota: la lascio com'è.`);
+          continue;
+        }
+        // cancellatura sulla fine della riga, dove c'è l'orario ("lavoro alle 23:00" → "lavoro"): l'orario va via
+        // anche se rileggendo è rimasto
+        if (!r.remove && e.strikes.length && !e.added.length) {
+          const ot0 = /^\s*- \[[ xX]\] (\d{2}:\d{2})/.exec(target.text)?.[1];
+          const firstWordEnd = Math.min(...e.old.map((st) => strokeBounds([st])!.maxX));
+          const strikeStart = Math.min(...e.strikes.map((st) => strokeBounds([st])!.minX));
+          if (ot0 && fixed.includes(` ${ot0} `) && strikeStart > firstWordEnd + 0.5) {
+            fixed = fixed.replace(` ${ot0} `, " ");
+            this.log(`«${words(fixed)}»: l'orario ${ot0} era sotto la cancellatura, lo tolgo.`);
+          }
+        }
+        // l'orario tolto: se il giorno l'aveva messo il plugin (orario già passato → domani), torna il giorno della nota
+        let inferred = !!known?.inferred && knownLine === target;
+        if (inferred && !/^- \[[ xX]\] \d{2}:\d{2}/.test(fixed) && /📅/.test(fixed)) {
+          fixed = fixed.replace(/\s*📅\s*\d{4}-\d{2}-\d{2}/, "");
+          inferred = false;
+        }
+        // un orario appena aggiunto (o cambiato) già passato quando l'hai scritto, senza un giorno: è domani
+        const nt = /^- \[[ xX]\] (\d{2}):(\d{2})/.exec(fixed);
+        const ot = /^\s*- \[[ xX]\] (\d{2}:\d{2})/.exec(target.text)?.[1];
+        if (nt && !/📅/.test(fixed) && ot !== `${nt[1]}:${nt[2]}` && Number.isFinite(writtenAt)) {
+          const w = new Date(writtenAt);
+          const noteDay = /^(\d{4}-\d{2}-\d{2})$/.exec(target.seg.file.basename)?.[1];
+          if ((!noteDay || noteDay === today) && Number(nt[1]) * 60 + Number(nt[2]) + 15 < w.getHours() * 60 + w.getMinutes()) {
+            fixed += ` 📅 ${new Date(w.getFullYear(), w.getMonth(), w.getDate() + 1, 12).toLocaleDateString("sv-SE")}`;
+            inferred = true;
+          }
+        }
+        const next = r.remove ? "" : indent + fixed;
         await this.app.vault.process(target.seg.file, (c) =>
           r.remove ? removeLineInBlock(c, target.text, target.seg.blockId) : replaceLineInBlock(c, target.text, next, target.seg.blockId).content
         );
+        this.renameRow(pid, target.text, next);
+        if (known && !r.remove) known.inferred = inferred || undefined;
         if (!r.remove) target.text = next;
         for (const st of black) handled.add(st);
         this.log(r.remove ? `Riga cancellata sulla carta: «${target.text.trim()}».` : `Riga cambiata sulla carta (${e.why.join(", ")}): «${next.trim()}».`);
@@ -984,6 +1099,19 @@ export class Transcriber {
           row
         );
         if (!crop) continue;
+        // la riga della casella è registrata: si sa già quale task è
+        const known = this.rowAt(pageId(key), (k.box.y0 + k.box.y1) / 2, k.box.x0, pageBounds.maxX, letterHeight(visible));
+        const knownTask = known && /^- \[ \]/.test(known.text) ? open.find((o) => near(o, known.text.replace(/^- \[ \]\s*/, ""))) : undefined;
+        if (knownTask) {
+          open.splice(open.indexOf(knownTask), 1);
+          const same = result.checked_tasks.findIndex((c) => near(c, knownTask));
+          if (same >= 0) result.checked_tasks[same] = knownTask;
+          else {
+            result.checked_tasks.push(knownTask);
+            this.log(`Spunta su «${knownTask}» (la casella è sulla sua riga).`);
+          }
+          continue;
+        }
         try {
           const r = await readTickedTask({ apiKey: s.apiKey, apiBaseUrl: s.apiBaseUrl, model: s.model, pngBase64: crop.base64, candidates: open });
           result.usage.cost += r.cost;
@@ -1058,6 +1186,36 @@ export class Transcriber {
       const d = new Date(`${today}T12:00:00`);
       d.setDate(d.getDate() + add);
       l.due = d.toLocaleDateString("sv-SE");
+    }
+
+    // "aereo alle 13:00" scritto alle 22:40 senza un giorno: è domani (un orario già passato oggi non è un impegno)
+    if (Number.isFinite(writtenAt)) {
+      const w = new Date(writtenAt);
+      const nowMin = w.getHours() * 60 + w.getMinutes();
+      for (const l of result.lines) {
+        if (l.kind !== "task" || l.due || !l.time) continue;
+        const [h, m] = l.time.split(":").map(Number);
+        if (h * 60 + m + 15 >= nowMin) continue;
+        const d = new Date(w.getFullYear(), w.getMonth(), w.getDate() + 1, 12);
+        l.due = d.toLocaleDateString("sv-SE");
+        l.inferredDue = true;
+        this.log(`«${l.text}» alle ${l.time}: quell'ora oggi era già passata quando l'hai scritto, è per domani (${l.due}).`);
+      }
+    }
+    // una casella nuova è spuntata solo se sulla carta c'è davvero il segno dentro (Claude a volte la vede spuntata
+    // per le spunte delle righe vicine)
+    {
+      const newBoxes = findTaskBoxes(toDo, visible);
+      const boxStrokes = new Set(newBoxes.flatMap((b) => b.strokes));
+      const ticked = findTicks(
+        toDo.filter((st) => !boxStrokes.has(st)),
+        newBoxes
+      ).length;
+      const claimed = result.lines.filter((l) => l.kind === "task" && l.checked);
+      if (claimed.length && !ticked) {
+        for (const l of claimed) l.checked = false;
+        this.log(`${claimed.map((l) => `«${l.text}»`).join(", ")}: nessun segno nella casella sulla carta, da fare.`);
+      }
     }
 
     // "aereo domani alle 14:20" → task "aereo", 📅 domani, ore 14:20: le parole della data e dell'orario non restano nel titolo
@@ -1416,6 +1574,7 @@ export class Transcriber {
           if (!old) continue;
           result.lines.splice(result.lines.indexOf(l), 1);
           upgrades.push({ old, md: linesToMarkdown([l]), seg: sg.blockId });
+          this.renameRow(pid, old, linesToMarkdown([l]));
           this.log(`«${old.trim()}» → «${linesToMarkdown([l])}» (casella o orario aggiunti sulla carta).`);
         }
       }
@@ -1448,6 +1607,7 @@ export class Transcriber {
     // (in tutte le parti della pagina: anche i task sotto un titolo a metà pagina, es. "#task Task")
     if (!force) await adoptPhoneTasks(this.app, [...result.lines, ...groups.slice(1).flatMap((g) => g.lines)], (m) => this.log(`Pagina ${key.page}: ${m}`));
     const md = linesToMarkdown(result.lines);
+    this.recordRows(pid, target.blockId, result.lines, png);
     /** Cosa è stato scritto in quale nota (per mettere i #tag nella nota giusta). */
     const written: { file: TFile; md: string; daily: boolean }[] = [{ file: target.file, md, daily: target.kind === "daily" }];
     if (md || joinToPrev || force) {
@@ -1546,6 +1706,7 @@ export class Transcriber {
     for (let k = 1; k < groups.length; k++) {
       const g = groups[k];
       let gmd = linesToMarkdown(g.lines);
+      const gLines = g.lines;
       let seg: RoutedNote;
       // ritrascrivi da capo: si riusa la nota già creata per lo stesso titolo (non "la k-esima": se un titolo
       // manca o è letto diverso, le altre note non si scambiano il testo)
@@ -1559,6 +1720,7 @@ export class Transcriber {
       }
       after = seg.blockId;
       usedSegs.add(seg.blockId);
+      this.recordRows(pid, seg.blockId, gLines, png);
       // parte mandata nella nota del giorno (#task accanto al titolo): la nota resta col nome della data,
       // il titolo scritto a mano resta come etichetta in grassetto sopra i suoi task
       if (seg.kind === "daily" && g.title) gmd = `**${g.title}**${gmd ? "\n" + gmd : ""}`;

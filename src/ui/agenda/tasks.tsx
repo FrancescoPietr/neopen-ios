@@ -28,6 +28,10 @@ function Planned({ onTask }: { onTask: (t: VaultTask) => void }) {
   const later = open.filter((x) => x.date && x.date > horizon).sort(byDateTime);
   const undated = open.filter((x) => !x.date).sort(byDateTime);
   const [showUndated, setShowUndated] = useState(true);
+  // quello che è già fatto oggi non resta in mezzo: si apre a richiesta
+  const [showDone, setShowDone] = useState(false);
+  const doneToday = todays.filter((x) => x.done);
+  const openToday = todays.filter((x) => !x.done);
   const byDay = new Map<string, VaultTask[]>();
   for (const x of next) byDay.set(x.date!, [...(byDay.get(x.date!) ?? []), x]);
   const todo = todays.filter((x) => !x.done).length;
@@ -40,7 +44,14 @@ function Planned({ onTask }: { onTask: (t: VaultTask) => void }) {
       ))}
 
       <SectionHeader title={`Oggi · ${longDate(t)}`} right={todo ? `${todo} da fare` : undefined} />
-      {todays.length ? todays.map((x) => <TaskRow key={x.id} task={x} onPress={() => onTask(x)} />) : <Text style={st.free}>Niente per oggi.</Text>}
+      {openToday.length ? openToday.map((x) => <TaskRow key={x.id} task={x} onPress={() => onTask(x)} />) : <Text style={st.free}>{doneToday.length ? "Tutto fatto per oggi." : "Niente per oggi."}</Text>}
+      {doneToday.length ? (
+        <Pressable onPress={() => setShowDone(!showDone)} style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 8 }}>
+          <Text style={{ flex: 1, color: C.sub }}>{doneToday.length === 1 ? "1 fatta" : `${doneToday.length} fatte`}</Text>
+          <Glyph name={showDone ? "nav.down" : "nav.next"} size={14} color={C.sub} />
+        </Pressable>
+      ) : null}
+      {showDone ? doneToday.map((x) => <TaskRow key={x.id} task={x} onPress={() => onTask(x)} />) : null}
 
       {[...byDay.entries()].map(([d, list]) => (
         <View key={d}>

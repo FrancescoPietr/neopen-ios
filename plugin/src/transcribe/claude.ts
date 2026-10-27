@@ -14,6 +14,8 @@ export interface TranscribedLine {
   box?: number[];
   /** Solo per i task: casella spuntata o barrata. */
   checked: boolean;
+  /** Solo per i task: la data l'ha messa il plugin (orario già passato quando l'hai scritto → domani), non la carta. */
+  inferredDue?: boolean;
   /** Solo per i task: prende il posto di una riga messa dal telefono (^penna-…). */
   adopted?: boolean;
   /** Solo per i task: scadenza YYYY-MM-DD, stringa vuota se assente. */
@@ -616,6 +618,7 @@ export async function readRowEdit(opts: {
   lines: string[];
   today: string;
   vocabulary?: string;
+  retried?: boolean;
 }): Promise<{ n: number; line: string; remove: boolean; cost: number }> {
   const list = opts.lines.map((c, i) => `${i + 1}. ${c.trim()}`).join("\n");
   const text = [
@@ -662,7 +665,14 @@ export async function readRowEdit(opts: {
   });
   if (res.status >= 400) throw new Error(`API Claude ${res.status}`);
   const data = res.json;
-  const out = JSON.parse((data?.content ?? []).find((c: any) => c.type === "text")?.text ?? "{}");
+  let out: { n?: number; line?: string; remove?: boolean } = {};
+  try {
+    out = JSON.parse((data?.content ?? []).find((c: any) => c.type === "text")?.text ?? "{}");
+  } catch {
+    // risposta tagliata o malformata: si riprova una volta
+    if (!opts.retried) return readRowEdit({ ...opts, retried: true });
+    throw new Error("risposta di Claude non leggibile");
+  }
   const u = data?.usage ?? {};
   const cost = estimateCost(opts.model, {
     inputTokens: Number(u.input_tokens) || 0,

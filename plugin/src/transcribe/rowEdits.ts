@@ -49,7 +49,7 @@ export function clusters(strokes: Stroke[], H: number): Stroke[][] {
  * Le righe già scritte che la scrittura nuova cambia. `fresh` = tratti nuovi (senza spunte), `strikes` = quelli tra
  * loro che sono cancellature, `old` = tratti già trascritti. Quello che non va in nessuna riga resta testo nuovo.
  */
-export function planRowEdits(fresh: Stroke[], strikes: Stroke[], old: Stroke[], all: Stroke[]): RowEdit[] {
+export function planRowEdits(fresh: Stroke[], strikes: Stroke[], old: Stroke[], all: Stroke[], boxes: B[] = []): RowEdit[] {
   const H = letterHeight(all.filter(ink));
   const oldInk = old.filter(ink);
   const rows = writtenRows(oldInk, all);
@@ -101,6 +101,15 @@ export function planRowEdits(fresh: Stroke[], strikes: Stroke[], old: Stroke[], 
   for (const g of clusters(fresh.filter((s) => ink(s) && !strikeSet.has(s)), H)) {
     const b = bounds(g);
     const c = (b.y0 + b.y1) / 2;
+    // segni su una casella che c'è già (spunta, X, casella ripassata): sono spunte, non testo della riga
+    if (boxes.some((x) => b.x0 < x.x1 + 0.4 * H && x.x0 - 0.4 * H < b.x1 && b.y0 < x.y1 + 0.6 * H && x.y0 - 1.2 * H < b.y1 && b.x1 < x.x1 + 2.5 * H)) continue;
+    // una casella (anche già spuntata) disegnata all'inizio di una riga che non l'aveva: le spunte salgono sopra la
+    // riga, quindi basta che stia a sinistra della prima parola, all'altezza della riga
+    const start = rows.findIndex((r) => b.x1 <= r.x0 + 0.8 * H && b.x0 >= r.x0 - 4 * H && b.y1 >= r.yc - 0.5 * H && b.y0 <= r.yc + 0.8 * H && b.y1 - b.y0 < 4 * H);
+    if (start >= 0) {
+      edit(start, "casella all'inizio della riga").added.push(...g);
+      continue;
+    }
     // sulla riga di parole già scritte
     const r = sameRow(b);
     if (r >= 0) {

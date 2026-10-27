@@ -24,7 +24,8 @@ export function takePhoneLines(content: string, tasks: TranscribedLine[]): { con
   const used = new Set<TranscribedLine>();
   const out = content.split("\n").filter((line) => {
     const m = PHONE_LINE.exec(line);
-    if (!m) return true;
+    // solo le righe del telefono ancora da fare: una già fatta è storia (un "lavorare" di ieri non è quello di oggi)
+    if (!m || m[1] !== " ") return true;
     const title = phoneTitle(m[2]);
     const task = tasks.find((t) => !used.has(t) && sameTitle(t.text, title));
     if (!task) return true;
@@ -42,11 +43,13 @@ export function takePhoneLines(content: string, tasks: TranscribedLine[]): { con
 export async function adoptPhoneTasks(app: App, lines: TranscribedLine[], log: (m: string) => void): Promise<void> {
   const tasks = lines.filter((l) => l.kind === "task" && l.text.trim());
   if (!tasks.length) return;
-  const since = Date.now() - 30 * 86_400_000;
+  const since = Date.now() - 2 * 86_400_000;
   const files = app.vault.getMarkdownFiles().filter((f) => {
     const blocks = app.metadataCache.getFileCache(f)?.blocks;
-    if (blocks && Object.keys(blocks).some((k) => k.toLowerCase().startsWith("penna-"))) return true;
-    return f.stat.mtime >= since && !f.path.includes("/_");
+    // le note del giorno di oggi e di ieri (o cambiate da poco), non lo storico
+    const day = /^(\d{4}-\d{2}-\d{2})$/.exec(f.basename)?.[1];
+    if (day) return new Date(`${day}T23:59:59`).getTime() >= since;
+    return !!blocks && Object.keys(blocks).some((k) => k.toLowerCase().startsWith("penna-")) && f.stat.mtime >= since;
   });
   for (const f of files) {
     const text = await app.vault.cachedRead(f);

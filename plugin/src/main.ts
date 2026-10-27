@@ -138,6 +138,7 @@ export default class NeoPenPlugin extends Plugin {
         handwritingEnabled: this.settings.handwritingEnabled,
         handwritingMax: this.settings.handwritingMax,
         handwritingLang: this.settings.handwritingLang,
+        lineRows: (this.settings.lineRows = this.settings.lineRows ?? {}),
       }),
       (m) => this.log(m),
       (m) => new Notice(m, 8000),

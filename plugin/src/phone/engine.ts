@@ -166,6 +166,7 @@ export async function transcribePages(opts: PhoneEngineOptions, pages: PhonePage
       handwritingEnabled: settings!.handwritingEnabled,
       handwritingMax: settings!.handwritingMax,
       handwritingLang: settings!.handwritingLang,
+      lineRows: (settings!.lineRows = settings!.lineRows ?? {}),
     }),
     log,
     (m) => log(m.replace(/^Neo Pen:\s*/, "")),

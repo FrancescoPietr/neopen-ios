@@ -222,9 +222,15 @@ function DayScreen({ day, onGo, onBack, onTask, onEvent }: { day: string; onGo: 
   const a = useAgenda();
   useEvents(addDays(day, -1), addDays(day, 1));
   const swipe = useSwipe(() => onGo(addDays(day, -1)), () => onGo(addDays(day, 1)));
-  const evs = visibleEvents(a, day);
+  const [showDone, setShowDone] = useState(false);
+  const isDoneEvent = (e: CalEvent) => /^\s*✓/.test(e.title);
+  const allEvs = visibleEvents(a, day);
+  const allTasks = onDay(a.tasks, day);
+  // gli impegni e le attività già fatti non restano in mezzo: si aprono a richiesta
+  const doneCount = allEvs.filter(isDoneEvent).length + allTasks.filter((x) => x.done).length;
+  const evs = showDone ? allEvs : allEvs.filter((e) => !isDoneEvent(e));
+  const tasks = showDone ? allTasks : allTasks.filter((x) => !x.done);
   const allDay = evs.filter((e) => e.allDay);
-  const tasks = onDay(a.tasks, day);
   const items = timeline(day, evs, tasks);
   const untimed = tasks.filter((x) => !x.time);
   const d = parseYmd(day);
@@ -290,7 +296,13 @@ function DayScreen({ day, onGo, onBack, onTask, onEvent }: { day: string; onGo: 
           <TaskRow key={x.id} task={x} onPress={() => onTask(x)} />
         ))}
 
-        {!allDay.length && !items.length && !untimed.length ? <Empty text="Niente in programma. Tocca + per aggiungere." /> : null}
+        {!allDay.length && !items.length && !untimed.length ? <Empty text={doneCount ? "Tutto fatto." : "Niente in programma. Tocca + per aggiungere."} /> : null}
+        {doneCount ? (
+          <Pressable onPress={() => setShowDone(!showDone)} style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 12 }}>
+            <Text style={{ flex: 1, color: C.sub }}>{showDone ? "Nascondi le cose fatte" : doneCount === 1 ? "1 cosa fatta" : `${doneCount} cose fatte`}</Text>
+            <Glyph name={showDone ? "nav.down" : "nav.next"} size={14} color={C.sub} />
+          </Pressable>
+        ) : null}
       </ScrollView>
     </View>
   );
