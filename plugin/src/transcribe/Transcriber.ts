@@ -8,7 +8,8 @@ import { adoptPhoneTasks } from "../notes/phoneTasks";
 import { expandBounds, renderStrokesPng } from "../render/png";
 import { PageStore } from "../store/PageStore";
 import { PageKey, Stroke, pageId } from "../types";
-import { HandwritingRef, TranscribedLine, parseLine, readTickedTask, transcribeWithClaude } from "./claude";
+import { HandwritingRef, TranscribedLine, keepTags, normalizeTaskLine, parseLine, readRowEdit, readTickedTask, transcribeWithClaude } from "./claude";
+import { planRowEdits } from "./rowEdits";
 import { findTaskBoxes, findTicks, taskLines, writtenRows } from "./ticks";
 import { svgToPngBase64 } from "../views/handwriting";
 import { alphabetScheme, resolveLang } from "./samples";
@@ -17,7 +18,7 @@ import { escapeLabelLine } from "./drawings";
 import { DrawingRecord, findExtensions, growInto, reconstructRecord, recordPathOf, sameCanvas } from "./drawingUpdate";
 import { addReplyInBlock, replaceLineInBlock, hasBlock, stripLegacyPageSections, BLOCK_END, BLOCK_START, checkTasksInBlock, deleteTextInBlock, linesToMarkdown, readBlock, removeLineInBlock, writeIntoBlock } from "./noteBlock";
 import { strokeBounds } from "../render/svg";
-import { classifyLines, findReplyArrows, underlineReport } from "./lineHint";
+import { classifyLines, findReplyArrows, findStrikes, underlineReport } from "./lineHint";
 
 export interface TranscriberSettings {
   apiKey: string;
@@ -560,6 +561,76 @@ export class Transcriber {
     }
   }
 
+  /**
+   * Le righe già trascritte che la scrittura nuova cambia (vedi rowEdits.ts): per ognuna un ritaglio della riga e la
+   * riga della nota aggiornata. Restituisce i tratti nuovi sistemati così (il resto va alla trascrizione normale).
+   */
+  private async editRows(key: PageKey, strokes: Stroke[], toDo: Stroke[]): Promise<Set<Stroke>> {
+    const handled = new Set<Stroke>();
+    const s = this.settings();
+    const visible = strokes.filter((st) => st.tip !== 1 && st.pts.length >= 3);
+    const old = visible.filter((st) => st.tx);
+    const ticks = new Set(findTicks(toDo, findTaskBoxes(old, visible)).flatMap((k) => k.strokes));
+    const fresh = toDo.filter((st) => !ticks.has(st));
+    if (!fresh.length) return handled;
+    const edits = planRowEdits(fresh, findStrikes(fresh, visible), old, visible);
+    if (!edits.length) return handled;
+    // le righe della nota per questa pagina (testo, task, titoli: non i blocchi dei disegni)
+    const lines: { text: string; seg: RoutedNote }[] = [];
+    for (const sg of this.router.segmentsOf(key)) {
+      let fence = false;
+      for (const l of readBlock(await this.app.vault.read(sg.file), sg.blockId).split("\n")) {
+        const t = l.trim();
+        if (t.startsWith("```")) {
+          fence = !fence;
+          continue;
+        }
+        if (fence || !t || t.startsWith("<!--") || t.startsWith(">")) continue;
+        lines.push({ text: l, seg: sg });
+      }
+    }
+    if (!lines.length) return handled;
+    const writtenAt = Math.min(...fresh.map((st) => st.t).filter((t) => t > 1_000_000_000_000));
+    const today = new Date(Number.isFinite(writtenAt) ? writtenAt : Date.now()).toLocaleDateString("sv-SE");
+    for (const e of edits) {
+      const black = new Set<Stroke>([...e.strikes, ...e.added]);
+      const red = new Set<Stroke>(e.strikes);
+      const all = strokeBounds([...e.old, ...e.strikes, ...e.added]);
+      if (!all) continue;
+      const focus = { minX: Math.min(all.minX, e.row.x0) - 1, maxX: Math.max(all.maxX, e.row.x1) + 1, minY: all.minY - 0.6, maxY: all.maxY + 0.6 };
+      // solo la riga e le sue modifiche: le righe sopra e sotto confondono
+      const own = new Set<Stroke>(e.old);
+      const png = renderStrokesPng(
+        visible.filter((st) => own.has(st) || black.has(st)),
+        (st) => black.has(st),
+        this.maxForce,
+        focus,
+        (st) => red.has(st)
+      );
+      if (!png) continue;
+      try {
+        const r = await readRowEdit({ apiKey: s.apiKey, apiBaseUrl: s.apiBaseUrl, model: s.model, pngBase64: png.base64, lines: lines.map((l) => l.text), today, vocabulary: s.vocabulary });
+        this.onSpend(r.cost);
+        if (!r.n || (!r.remove && !r.line)) {
+          this.log(`Pagina ${key.page}: una modifica su una riga già scritta (${e.why.join(", ")}) ma non trovo la riga nella nota: la trascrivo come testo nuovo.`);
+          continue;
+        }
+        const target = lines[r.n - 1];
+        const indent = /^\s*/.exec(target.text)![0];
+        const next = r.remove ? "" : indent + keepTags(target.text, normalizeTaskLine(r.line.replace(/^\s+/, "")));
+        await this.app.vault.process(target.seg.file, (c) =>
+          r.remove ? removeLineInBlock(c, target.text, target.seg.blockId) : replaceLineInBlock(c, target.text, next, target.seg.blockId).content
+        );
+        if (!r.remove) target.text = next;
+        for (const st of black) handled.add(st);
+        this.log(r.remove ? `Riga cancellata sulla carta: «${target.text.trim()}».` : `Riga cambiata sulla carta (${e.why.join(", ")}): «${next.trim()}».`);
+      } catch (err) {
+        this.log(`Modifica di una riga: ${(err as Error)?.message ?? err}`);
+      }
+    }
+    return handled;
+  }
+
   private async transcribe(key: PageKey, mode: "new" | "all"): Promise<void> {
     const s = this.settings();
     if (!s.apiKey) {
@@ -598,6 +669,19 @@ export class Transcriber {
           this.log(`Pagina ${key.page}: solo tratti aggiunti ai disegni, niente testo nuovo.`);
           return;
         }
+      }
+    }
+
+    // righe già scritte cambiate sulla carta (parole aggiunte sulla stessa riga, correzioni accanto a una cancellatura,
+    // orari cancellati, caselle disegnate davanti): ognuna si rilegge da sola e si aggiorna nella nota
+    if (hasContext && mode === "new") {
+      const handled = await this.editRows(key, page.strokes, toDo);
+      if (handled.size) {
+        await this.store.markTranscribed(key, [...handled].map((st) => st.t));
+        for (const st of handled) st.tx = st.tx ?? Date.now();
+        toDo = toDo.filter((st) => !handled.has(st));
+        newSet = new Set(toDo.map((st) => st.t));
+        if (!toDo.length) return;
       }
     }
 
@@ -1342,19 +1426,22 @@ export class Transcriber {
       const have = new Set(
         readBlock(await this.app.vault.read(target.file), target.blockId)
           .split("\n")
-          .map((l) =>
-            looseText(
+          .map((l) => {
+            // con l'orario: "lavoro" scritto di nuovo su una riga nuova non è "23:00 lavoro" riletto
+            const time = /^\s*- \[[ xX]\]\s*(\d{1,2}:\d{2})/.exec(l)?.[1] ?? "";
+            const words = looseText(
               l
                 .replace(/^\s*- \[[ xX]\]\s*/, "")
                 .replace(/^\s*-\s+(↳\s*)?/, "")
                 .replace(/^\d{1,2}:\d{2}(-\d{1,2}:\d{2})?\s+/, "")
                 .replace(/\s*📅.*$/, "")
-            )
-          )
-          .filter((t) => t.length >= 4)
+            );
+            return words.length >= 4 ? `${words}|${time}` : "";
+          })
+          .filter(Boolean)
       );
       const before = result.lines.length;
-      result.lines = result.lines.filter((l) => l.kind === "newnote" || !have.has(looseText(l.text)));
+      result.lines = result.lines.filter((l) => l.kind === "newnote" || !have.has(`${looseText(l.text)}|${(l.time ?? "").slice(0, 5)}`));
       if (result.lines.length < before) this.log(`Pagina ${key.page}: ${before - result.lines.length} righe già presenti nella nota, non le ripeto.`);
     }
     // task che il telefono aveva già messo nella nota del giorno: la trascrizione prende il loro posto

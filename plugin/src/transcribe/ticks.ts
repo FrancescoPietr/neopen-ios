@@ -22,7 +22,7 @@ export interface Tick {
   strokes: Stroke[];
 }
 
-interface B {
+export interface B {
   x0: number;
   y0: number;
   x1: number;
@@ -31,7 +31,7 @@ interface B {
 
 const ink = (s: Stroke) => s.tip !== 1 && s.pts.length >= 3;
 
-function bounds(strokes: Stroke[]): B {
+export function bounds(strokes: Stroke[]): B {
   let x0 = Infinity,
     y0 = Infinity,
     x1 = -Infinity,
@@ -59,7 +59,7 @@ function pathLen(strokes: Stroke[]): number {
 }
 
 /** Altezza tipica delle lettere della pagina (unità Ncode). */
-function letterHeight(all: Stroke[]): number {
+export function letterHeight(all: Stroke[]): number {
   const hs = all
     .map((s) => bounds([s]))
     .map((b) => b.y1 - b.y0)

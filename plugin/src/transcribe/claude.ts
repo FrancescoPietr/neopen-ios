@@ -602,3 +602,115 @@ export async function readTickedTask(opts: {
   });
   return { task: n >= 1 && n <= opts.candidates.length ? opts.candidates[n - 1] : "", cost };
 }
+
+/**
+ * Una riga già trascritta cambiata sulla carta (parole aggiunte, cancellate, corrette, una casella disegnata davanti):
+ * l'immagine è solo quella riga, la scrittura vecchia in grigio, quella nuova in nero, le cancellature in rosso.
+ * Claude dice quale delle righe della nota è (n, 0 se nessuna) e come diventa.
+ */
+export async function readRowEdit(opts: {
+  apiKey: string;
+  apiBaseUrl?: string;
+  model: string;
+  pngBase64: string;
+  lines: string[];
+  today: string;
+  vocabulary?: string;
+}): Promise<{ n: number; line: string; remove: boolean; cost: number }> {
+  const list = opts.lines.map((c, i) => `${i + 1}. ${c.trim()}`).join("\n");
+  const text = [
+    "This image shows one line of a handwritten page and what was just changed on it.",
+    "GRAY writing was already transcribed. BLACK writing was just added. RED strokes are strike-throughs just drawn over gray words (the words under red are deleted).",
+    "These are the lines already transcribed from this page:",
+    list,
+    "1) n = the number of the line above that is the GRAY line in the image (0 if none of them).",
+    "2) line = that line rewritten after the change, in the same format:",
+    "- remove the words struck in red;",
+    "- add the black writing where it is on the paper: after the last word → at the end; just above or between words → inserted there; right next to, above or below red-struck words → in their place;",
+    '- a box drawn at the start makes the line a task "- [ ] …"; a tick or X in its box makes it "- [x] …";',
+    '- tasks are written "- [ ] HH:MM text 📅 YYYY-MM-DD": a time ("alle 23:00", "ore 15", "23:00") goes in front as "HH:MM " and is not left in the text; "oggi", "domani", "dopodomani" become the 📅 date (today is ' + opts.today + ") and are not left in the text;",
+    "- a time struck in red is removed (the task stays, without a time); a new time written next to a struck one replaces it;",
+    "- copy the words that are not changed exactly as in the numbered line, with their #tags (do not read them again); read only the black writing.",
+    "remove = true only if every word of that line is struck in red.",
+    opts.vocabulary ? `Words the author often uses: ${opts.vocabulary}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const body = {
+    model: opts.model,
+    max_tokens: 600,
+    messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: opts.pngBase64 } }, { type: "text", text }] }],
+    output_config: {
+      format: {
+        type: "json_schema",
+        schema: {
+          type: "object",
+          properties: { n: { type: "integer" }, line: { type: "string" }, remove: { type: "boolean" } },
+          required: ["n", "line", "remove"],
+          additionalProperties: false,
+        },
+      },
+    },
+  };
+  const res = await requestUrl({
+    url: `${(opts.apiBaseUrl || "https://api.anthropic.com").replace(/\/+$/, "")}/v1/messages`,
+    method: "POST",
+    contentType: "application/json",
+    headers: { "x-api-key": opts.apiKey, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify(body),
+    throw: false,
+  });
+  if (res.status >= 400) throw new Error(`API Claude ${res.status}`);
+  const data = res.json;
+  const out = JSON.parse((data?.content ?? []).find((c: any) => c.type === "text")?.text ?? "{}");
+  const u = data?.usage ?? {};
+  const cost = estimateCost(opts.model, {
+    inputTokens: Number(u.input_tokens) || 0,
+    outputTokens: Number(u.output_tokens) || 0,
+    cacheReadTokens: Number(u.cache_read_input_tokens) || 0,
+    cacheWriteTokens: Number(u.cache_creation_input_tokens) || 0,
+  });
+  const n = Number(out.n) || 0;
+  return { n: n >= 1 && n <= opts.lines.length ? n : 0, line: String(out.line ?? "").trim(), remove: !!out.remove, cost };
+}
+
+/** Una riga di task nel formato del plugin: "- [ ] HH:MM testo 📅 data", con l'orario scritto nel testo portato davanti. */
+export function normalizeTaskLine(line: string): string {
+  const m = /^(\s*)- \[([ xX])\]\s*(.*)$/.exec(line);
+  if (!m) return line;
+  let rest = m[3].trim();
+  let date = "";
+  const d = /\s*📅\s*(\d{4}-\d{2}-\d{2})\s*$/.exec(rest);
+  if (d) {
+    date = d[1];
+    rest = rest.slice(0, d.index).trim();
+  }
+  let time = "";
+  const lead = /^(\d{1,2})[:.](\d{2})(?:\s*-\s*(\d{1,2})[:.](\d{2}))?\s+/.exec(rest);
+  if (lead && Number(lead[1]) < 24 && Number(lead[2]) < 60) {
+    time = `${lead[1].padStart(2, "0")}:${lead[2]}${lead[3] ? `-${lead[3].padStart(2, "0")}:${lead[4]}` : ""}`;
+    rest = rest.slice(lead[0].length);
+  } else {
+    const at = timeInText(rest);
+    if (at) {
+      time = at.end ? `${at.time}-${at.end}` : at.time;
+      rest = at.rest;
+    }
+  }
+  // parole dell'orario e della data rimaste nel testo ("mangia alle", "aereo domani")
+  if (time) rest = rest.replace(/(^|\s)(?:alle|ore|dalle)(?=\s*$)/i, "$1").replace(/^(?:alle|ore|dalle)\s+/i, "");
+  if (date) rest = rest.replace(/(^|\s)(?:oggi|domani|dopodomani)(?=\s|$)/i, "$1");
+  rest = rest.replace(/\s{2,}/g, " ").trim();
+  return `${m[1]}- [${m[2]}] ${time ? `${time} ` : ""}${rest}${date ? ` 📅 ${date}` : ""}`;
+}
+
+/** I #tag della riga vecchia che Claude ha riscritto senza "#" tornano tag. */
+export function keepTags(oldLine: string, newLine: string): string {
+  let out = newLine;
+  for (const m of oldLine.matchAll(/#([\p{L}\p{N}_\-/]+)/gu)) {
+    const w = m[1];
+    if (out.includes(`#${w}`)) continue;
+    out = out.replace(new RegExp(`(^|[\\s(])${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=$|[\\s,.;:!?)])`, "u"), `$1#${w}`);
+  }
+  return out;
+}
