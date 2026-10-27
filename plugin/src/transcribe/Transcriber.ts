@@ -8,7 +8,7 @@ import { adoptPhoneTasks } from "../notes/phoneTasks";
 import { expandBounds, renderStrokesPng } from "../render/png";
 import { PageStore } from "../store/PageStore";
 import { PageKey, Stroke, pageId } from "../types";
-import { HandwritingRef, TranscribedLine, keepTags, normalizeTaskLine, parseLine, readRowEdit, readTickedTask, transcribeWithClaude } from "./claude";
+import { HandwritingRef, TranscribedLine, keepTags, normalizeTaskLine, parseLine, readLineTime, readRowEdit, readTickedTask, transcribeWithClaude } from "./claude";
 import { planRowEdits } from "./rowEdits";
 import { findTaskBoxes, findTicks, letterHeight, taskLines, writtenRows } from "./ticks";
 import { svgToPngBase64 } from "../views/handwriting";
@@ -1236,6 +1236,35 @@ export class Transcriber {
     // contano dal giorno di quella riga, non dal primo tratto scaricato
     const lineAt = this.lineTimes(result.lines, toDo, png, Number.isFinite(writtenAt) ? writtenAt : Date.now());
     const dayOfLine = (l: TranscribedLine) => new Date(lineAt.get(l) ?? writtenAt).toLocaleDateString("sv-SE");
+
+    // L'orario di ogni task nuovo si rilegge guardando solo la sua riga: nella pagina intera le cifre a mano si
+    // confondono (17 letto 07). Se la riga da sola dice un altro orario, vale quello.
+    for (const l of result.lines) {
+      if (l.kind !== "task" || !l.time || !l.box) continue;
+      const b = boxToNcode(l.box, png);
+      if (!b) continue;
+      const row = { minX: b.minX - 0.6, maxX: b.maxX + 0.6, minY: b.minY - 0.5, maxY: b.maxY + 0.5 };
+      const inRow = (st: Stroke) => {
+        const sb = strokeBounds([st]);
+        if (!sb) return false;
+        const cy = (sb.minY + sb.maxY) / 2;
+        return cy >= row.minY && cy <= row.maxY && sb.maxX >= row.minX && sb.minX <= row.maxX;
+      };
+      const own = toDo.filter((st) => !gone.has(st) && inRow(st));
+      if (own.length < 3) continue;
+      const crop = renderStrokesPng(own, () => true, this.maxForce, row, (st) => struck.has(st));
+      if (!crop) continue;
+      try {
+        const r = await readLineTime({ apiKey: s.apiKey, apiBaseUrl: s.apiBaseUrl, model: s.model, pngBase64: crop.base64, references: await this.references() });
+        this.onSpend(r.cost);
+        if (r.time && r.time.slice(0, 5) !== l.time.slice(0, 5)) {
+          this.log(`«${l.text}»: guardando solo la riga l'orario è ${r.time}, non ${l.time}.`);
+          l.time = r.time.includes("-") || !l.time.includes("-") ? r.time : `${r.time}-${l.time.split("-")[1]}`;
+        }
+      } catch (e) {
+        this.log(`Rilettura dell'orario di «${l.text}» non riuscita: ${(e as Error)?.message ?? e}`);
+      }
+    }
 
     // "oggi" / "domani" / "dopodomani" in un task: la data si calcola qui dal giorno in cui hai scritto la riga
     // (se il modello l'ha dimenticata, o l'ha contata da un altro giorno)

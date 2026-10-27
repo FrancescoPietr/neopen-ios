@@ -606,6 +606,78 @@ export async function readTickedTask(opts: {
 }
 
 /**
+ * Rilettura dell'orario di una riga appena scritta, guardando solo quella riga (più grande): nella pagina intera le
+ * cifre a mano si confondono (17 letto 07, 14 letto 13).
+ */
+export async function readLineTime(opts: { apiKey: string; apiBaseUrl?: string; model: string; pngBase64: string; references?: HandwritingRef[] }): Promise<{ time: string; cost: number }> {
+  // le pagine #alfabeto dell'autore (con le sue cifre): per confrontare ogni cifra con come la scrive lui
+  const refs = (opts.references ?? []).flatMap((r, i) => [
+    ...(i === 0 ? [{ type: "text", text: "Samples of the author's handwriting (#alfabeto pages; item 6 has the digits 0-9). Compare each digit of the line with how the author writes the digits there." }] : []),
+    { type: "image", source: { type: "base64", media_type: "image/png", data: r.pngBase64 } },
+  ]);
+  const body = {
+    model: opts.model,
+    max_tokens: 200,
+    messages: [
+      {
+        role: "user",
+        content: [
+          ...refs,
+          ...(refs.length ? [{ type: "text", text: "The line to read:" }] : []),
+          { type: "image", source: { type: "base64", media_type: "image/png", data: opts.pngBase64 } },
+          {
+            type: "text",
+            text:
+              "This image is one handwritten line (Italian), usually a task with a time, e.g. \"cantare alle 11:00\". " +
+              "Read ONLY the clock time written on this line, digit by digit, looking closely at the shape of each digit: a 1 is a single short vertical stroke (it can be small, even just a tick); a 0 is a closed round loop; a 7 has a horizontal bar on top; a 4 is often written open at the top, like an 'h' or a 'y' with a short cross; a 3 has two bumps open to the left. Do not guess from what time would be usual: copy the digits as written. " +
+              "Struck-through digits do not count. If a time range is written, give the start in \"time\" and the end in \"end\". " +
+              'Answer "time" as HH:MM (24h, e.g. "17:00"), "" if no time is written; "end" as HH:MM or "".',
+          },
+        ],
+      },
+    ],
+    output_config: {
+      format: {
+        type: "json_schema",
+        schema: { type: "object", properties: { time: { type: "string" }, end: { type: "string" } }, required: ["time", "end"], additionalProperties: false },
+      },
+    },
+  };
+  const res = await requestUrl({
+    url: `${(opts.apiBaseUrl || "https://api.anthropic.com").replace(/\/+$/, "")}/v1/messages`,
+    method: "POST",
+    contentType: "application/json",
+    headers: { "x-api-key": opts.apiKey, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify(body),
+    throw: false,
+  });
+  if (res.status >= 400) throw new Error(`API Claude ${res.status}`);
+  const data = res.json;
+  const text = (data?.content ?? []).find((c: any) => c.type === "text")?.text ?? "{}";
+  let time = "";
+  try {
+    const j = JSON.parse(text);
+    const hm = (v: unknown) => {
+      const m = /^(\d{1,2})[:.](\d{2})$/.exec(String(v ?? "").trim());
+      return m && Number(m[1]) < 24 && Number(m[2]) < 60 ? `${m[1].padStart(2, "0")}:${m[2]}` : "";
+    };
+    const a = hm(j.time);
+    const b = hm(j.end);
+    time = a && b ? `${a}-${b}` : a;
+  } catch {
+    time = "";
+  }
+  const u = data?.usage ?? {};
+  const cost = estimateCost(opts.model, {
+    inputTokens: Number(u.input_tokens) || 0,
+    outputTokens: Number(u.output_tokens) || 0,
+    cacheReadTokens: Number(u.cache_read_input_tokens) || 0,
+    cacheWriteTokens: Number(u.cache_creation_input_tokens) || 0,
+  });
+  return { time, cost };
+}
+
+/**
  * Una riga già trascritta cambiata sulla carta (parole aggiunte, cancellate, corrette, una casella disegnata davanti):
  * l'immagine è solo quella riga, la scrittura vecchia in grigio, quella nuova in nero, le cancellature in rosso.
  * Claude dice quale delle righe della nota è (n, 0 se nessuna) e come diventa.
