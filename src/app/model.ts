@@ -12,6 +12,7 @@ import { PhoneEvents } from "./phoneEvents";
 import { agenda } from "./agenda";
 import { startOutputs } from "./outputs";
 import { PageStore } from "../core/store";
+import { keyLabel } from "../core/models";
 import { Uploader } from "../core/uploader";
 import { checkClaudeTests, startClaudeTest } from "./bgtest";
 import { DevicePageFiles, LogFile, readJson, writeJson } from "./files";
@@ -263,7 +264,12 @@ class AppModel {
       case "pageUpdated":
         this.uploader.schedule(4);
         this.phoneEvents.strokesArrived();
-        this.pageNotes.strokesArrived();
+        if (!this.session) {
+          // arrivati dopo che la penna si è scollegata (gli ultimi tratti scritti con la penna collegata): non c'è da
+          // aspettare che smetti di scrivere, e con l'app in sottofondo un'attesa lunga si perderebbe
+          this.write(`Pagina ${keyLabel(n.key)}: ${n.newStrokes} tratti arrivati alla fine, li trascrivo.`);
+          this.pageNotes.request();
+        } else this.pageNotes.strokesArrived();
         break;
       case "syncFinished":
         this.memoryRead = true;

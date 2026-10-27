@@ -766,6 +766,25 @@ export class Transcriber {
           fixed = fixed.replace(/\s*📅\s*\d{4}-\d{2}-\d{2}/, "");
           inferred = false;
         }
+        // un orario appena scritto: si rilegge guardando solo la scrittura nuova (le cifre a mano si confondono, 17 letto 07)
+        const nt0 = /^- \[[ xX]\] (\d{2}:\d{2})/.exec(fixed)?.[1];
+        if (nt0 && e.added.length && nt0 !== /^\s*- \[[ xX]\] (\d{2}:\d{2})/.exec(target.text)?.[1]) {
+          const ab = strokeBounds(e.added);
+          const crop = ab ? renderStrokesPng(e.added, () => true, this.maxForce, { minX: ab.minX - 0.6, maxX: ab.maxX + 0.6, minY: ab.minY - 0.5, maxY: ab.maxY + 0.5 }) : null;
+          if (crop) {
+            try {
+              const t = await readLineTime({ apiKey: s.apiKey, apiBaseUrl: s.apiBaseUrl, model: s.model, pngBase64: crop.base64, references: await this.references() });
+              this.onSpend(t.cost);
+              const hm = t.time.slice(0, 5);
+              if (hm && hm !== nt0) {
+                this.log(`«${words(fixed)}»: guardando solo la scrittura nuova l'orario è ${hm}, non ${nt0}.`);
+                fixed = fixed.replace(` ${nt0}`, ` ${hm}`);
+              }
+            } catch (err) {
+              this.log(`Rilettura dell'orario non riuscita: ${(err as Error)?.message ?? err}`);
+            }
+          }
+        }
         // un orario appena aggiunto (o cambiato) già passato quando l'hai scritto, senza un giorno: è domani
         const nt = /^- \[[ xX]\] (\d{2}):(\d{2})/.exec(fixed);
         const ot = /^\s*- \[[ xX]\] (\d{2}:\d{2})/.exec(target.text)?.[1];
