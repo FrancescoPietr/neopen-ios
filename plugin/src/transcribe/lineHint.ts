@@ -611,6 +611,20 @@ export function findStrikes(newStrokes: Stroke[], allStrokes: Stroke[]): Stroke[
     const h = ob.y1 - ob.y0;
     return h > 0.25 && !isDrawing(ob, H);
   };
+  // zig-zag (o ricciolo) passato sopra parole già scritte per annullarle: va avanti e indietro molte volte sulla
+  // stessa striscia e incrocia quasi tutte le lettere che copre. Una parola nuova scritta accanto non ne incrocia.
+  const scribbleOver = (s: Stroke, b: Box, partners: Set<Stroke>, crossings: number, text: Stroke[]): boolean => {
+    const w = b.x1 - b.x0;
+    if (partners.size < 2 || crossings < 6 || pathLen(s) < 3 * w) return false;
+    const covered = text.filter((o) => {
+      if (o === s) return false;
+      const ob = bx(o);
+      const cx = (ob.x0 + ob.x1) / 2;
+      const cy = (ob.y0 + ob.y1) / 2;
+      return cx > b.x0 && cx < b.x1 && cy > b.y0 && cy < b.y1;
+    });
+    return covered.length > 0 && covered.filter((o) => partners.has(o)).length >= 0.6 * covered.length;
+  };
   // a ogni giro le parole lunghe in corsivo (scartate al primo giro perché "piatte") tornano lettere,
   // tranne quelle già riconosciute come cancellature
   let found = new Set<Stroke>();
@@ -639,7 +653,8 @@ export function findStrikes(newStrokes: Stroke[], allStrokes: Stroke[]): Stroke[
       const strike = isUnder
         ? (crossings >= 3 && density >= 0.3) || (partners.size >= 2 && crossings >= 5 && density >= 0.2)
         : rev > 0.35
-          ? crossings >= 6 && density >= 0.5 // scarabocchio fitto sopra le lettere (una parola normale non incrocia quasi niente)
+          ? (crossings >= 6 && density >= 0.5) || // scarabocchio fitto sopra le lettere (una parola normale non incrocia quasi niente)
+            scribbleOver(s, b, partners, crossings, text)
           : partners.size >= 2 && crossings >= 3 && density >= 0.25;
       if (strike) next.add(s);
     }

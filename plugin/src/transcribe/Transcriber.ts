@@ -9,7 +9,7 @@ import { expandBounds, renderStrokesPng } from "../render/png";
 import { PageStore } from "../store/PageStore";
 import { PageKey, Stroke, pageId } from "../types";
 import { HandwritingRef, TranscribedLine, parseLine, readTickedTask, transcribeWithClaude } from "./claude";
-import { findTaskBoxes, findTicks, taskLines } from "./ticks";
+import { findTaskBoxes, findTicks, taskLines, writtenRows } from "./ticks";
 import { svgToPngBase64 } from "../views/handwriting";
 import { alphabetScheme, resolveLang } from "./samples";
 import { Canvas, DrawingSpec, PlacedLabel, boxToNcode, canvasFor, drawingLayout, drawingSvg, formatDrawingBlock, isConnector, labelTags, linesAfterBlock, moveAnchor, anchorOf, parseDrawingBlock, placeDrawings, addOrphanLabels, normText, placeLabels } from "./drawings";
@@ -634,25 +634,29 @@ export class Transcriber {
     // le parole nuove cancellate (e le loro linee) non arrivano proprio a Claude: niente da trascrivere per sbaglio
     const gone = new Set<Stroke>([...report.erased, ...report.hidden]);
     // frecce di risposta (da una riga a una scritta più sotto): in blu e numerate, così Claude collega bene
-    const arrows = findReplyArrows(
+    let arrows = findReplyArrows(
       toDo.filter((st) => !gone.has(st) && !struck.has(st)),
       visible.filter((st) => !gone.has(st)),
       new Set<Stroke>([...struck, ...gone])
     );
-    const arrowSet = new Set(arrows.map((a) => a.stroke));
-    const png = renderStrokesPng(
-      page.strokes.filter((st) => !gone.has(st)),
-      (st) => newSet.has(st.t),
-      this.maxForce,
-      focus,
-      (st) => red.has(st),
-      (st) => arrowSet.has(st),
-      arrows.flatMap((a, i) => [
-        { x: a.start.x, y: a.start.y, label: String(i + 1) },
-        { x: a.end.x, y: a.end.y, label: String(i + 1) },
-      ])
-    );
-    if (!png) return;
+    const draw = () => {
+      const arrowSet = new Set(arrows.map((a) => a.stroke));
+      return renderStrokesPng(
+        page.strokes.filter((st) => !gone.has(st)),
+        (st) => newSet.has(st.t),
+        this.maxForce,
+        focus,
+        (st) => red.has(st),
+        (st) => arrowSet.has(st),
+        arrows.flatMap((a, i) => [
+          { x: a.start.x, y: a.start.y, label: String(i + 1) },
+          { x: a.end.x, y: a.end.y, label: String(i + 1) },
+        ])
+      );
+    };
+    const drawn = draw();
+    if (!drawn) return;
+    let png = drawn;
     if (struck.size)
       this.log(
         `Cancellature riconosciute dai tratti: ${struck.size}` +
@@ -693,9 +697,11 @@ export class Transcriber {
     // pagina che continua un'altra nota (freccia sulla pagina prima): niente titolo della pagina, tutti i titoli
     // con la doppia linea si scrivono "== titolo" in ordine; quello in cima lo sistema poi il plugin (resta nella nota)
     const cont = this.router.isContinuation(key) && includesTop;
-    const arrowNote = arrows.length
-      ? ` Measured from the pen strokes: ${arrows.length === 1 ? "1 reply arrow is" : `${arrows.length} reply arrows are`} drawn in BLUE and numbered with a blue circle at both ends: arrow N starts next to the line it answers (circle N at the start → "to") and ends at the reply writing (circle N at the end → "text"). Write exactly one replies entry for each blue arrow, in order 1..${arrows.length}; gray arrows were already handled.`
+    const noteFor = (list: typeof arrows) =>
+      list.length
+      ? ` Measured from the pen strokes: ${list.length === 1 ? "1 reply arrow is" : `${list.length} reply arrows are`} drawn in BLUE and numbered with a blue circle at both ends: arrow N starts next to the line it answers (circle N at the start → "to") and ends at the reply writing (circle N at the end → "text"). Write exactly one replies entry for each blue arrow, in order 1..${list.length}; gray arrows were already handled.`
       : "";
+    const arrowNote = noteFor(arrows);
     // disegni già nella nota (in grigio nell'immagine): le scritte nuove accanto diventano loro scritte
     const existingNote = drawings.length
       ? ` EXISTING DRAWINGS (gray, already in the note): ${drawings
@@ -711,7 +717,7 @@ export class Transcriber {
     const tickNote = ticks.length
       ? ` Measured from the pen strokes: ${ticks.length === 1 ? "1 new tick is" : `${ticks.length} new ticks are`} on task boxes (${ticks.map((k) => `box at ${pxBox(k.box)}`).join("; ")}). Each one CHECKS the task written to the right of that box on the same line: put each of those tasks in checked_tasks, copied exactly from the already transcribed text. A tick is never a strike-through (never deleted_text) and never new text.`
       : "";
-    const hint =
+    let hint =
       report.hint +
       tickNote +
       arrowNote +
@@ -770,6 +776,17 @@ export class Transcriber {
       !result.checked_tasks.length &&
       !result.deleted_text.length &&
       !result.replies.length;
+    // due righe della carta (una sotto l'altra) unite in una riga sola: "mangia" sopra "lavoro alle 23:00"
+    const rows = writtenRows(
+      toDo.filter((st) => !struck.has(st) && !gone.has(st) && !tickSet.has(st)),
+      visible
+    );
+    const joined = result.lines.find((l) => {
+      if (!l.box || l.kind === "newnote") return false;
+      const b = boxToNcode(l.box, png);
+      if (!b) return false;
+      return rows.filter((r) => r.yc > b.minY && r.yc < b.maxY && r.x1 > b.minX && r.x0 < b.maxX).length >= 2;
+    });
     if (silent && writing >= 8) {
       retry = `IMPORTANT: your previous answer transcribed nothing, but there is new BLACK writing on this page (${writing} pen strokes). Transcribe it: in lines, or as labels of a drawing (new or existing) when it is joined to the drawing by an arrow or a line.`;
       this.log(`Nessun testo nella risposta ma ${writing} tratti nuovi: riprovo la trascrizione…`);
@@ -793,11 +810,33 @@ export class Transcriber {
         this.log(`Titoli con doppia sottolineatura: ${want} sulla pagina, ${out} nella risposta. Riprovo la trascrizione…`);
       }
     }
+    // righe unite: si chiede anche insieme a un altro motivo per riprovare (un solo tentativo in più)
+    if (joined && rows.length >= 2) {
+      retry = `${retry ? `${retry} ` : ""}IMPORTANT: in your answer the line "${joined.text}" joins two rows of handwriting that are one under the other on the paper. Every row is its own entry in lines, in order from top to bottom: a row that starts with a box is a task, a row without a box is plain text. Never move words (or a time) from one row to another.`;
+      this.log(`«${joined.text}»: due righe della carta unite in una. Riprovo la trascrizione…`);
+    }
     // risposte "con la freccia" ma nessuna freccia misurata, su una pagina con un disegno: le linee del disegno
     // (raggi, onde, frecce interne) sono state prese per frecce. Le scritte accanto al disegno sono testo accanto.
+    // "frecce" misurate che stanno dentro un disegno (il lato di una cinepresa, un raggio): sono tratti del disegno.
+    // Si tolgono (niente più blu nell'immagine) e le scritte accanto al disegno restano testo accanto.
+    {
+      const inDrawing = (p: { x: number; y: number }) =>
+        result.drawings.some((d) => {
+          const b = boxToNcode(d.box, png);
+          return !!b && p.x >= b.minX - 0.6 && p.x <= b.maxX + 0.6 && p.y >= b.minY - 0.6 && p.y <= b.maxY + 0.6;
+        });
+      const fake = arrows.filter((a) => inDrawing(a.start) && inDrawing(a.end));
+      if (fake.length) {
+        arrows = arrows.filter((a) => !fake.includes(a));
+        const again = draw();
+        if (again) png = again;
+        hint = hint.replace(arrowNote, noteFor(arrows));
+        this.log(`${fake.length === 1 ? "Una «freccia» è" : `${fake.length} «frecce» sono`} dentro un disegno: ${fake.length === 1 ? "è un tratto" : "sono tratti"} del disegno, non una risposta.`);
+      }
+    }
     const noArrows = () => !arrows.length && result.replies.length > 0 && result.drawings.some((d) => !(d as { existing?: number }).existing);
-    if (!retry && noArrows()) {
-      retry = `IMPORTANT: measured from the pen strokes there are NO reply arrows on this page: the lines of the drawing are part of the drawing. replies must be []: write every piece of writing in lines, in reading order; lines written beside a drawing go right after "[[drawing N]]" (set text_side and lines_beside).`;
+    if (noArrows()) {
+      retry = `${retry ? `${retry} ` : ""}IMPORTANT: measured from the pen strokes there are NO reply arrows on this page: the lines of the drawing are part of the drawing. replies must be []: write every piece of writing in lines, in reading order; lines written beside a drawing go right after "[[drawing N]]" (set text_side and lines_beside).`;
       this.log(`Risposte con la freccia ma nessuna freccia sulla carta (le linee del disegno?): riprovo la trascrizione…`);
     }
     if (retry) {
@@ -869,7 +908,12 @@ export class Transcriber {
             continue;
           }
           open.splice(open.indexOf(r.task), 1);
-          if (result.checked_tasks.some((c) => near(c, r.task))) continue;
+          // la riga esatta della nota al posto della copia di Claude (che può avere una casella o parole in più)
+          const same = result.checked_tasks.findIndex((c) => near(c, r.task));
+          if (same >= 0) {
+            result.checked_tasks[same] = r.task;
+            continue;
+          }
           result.checked_tasks.push(r.task);
           this.log(`Spunta su «${r.task}» (misurata sulla casella, Claude nella pagina intera non l'aveva vista).`);
         } catch (e) {
@@ -883,8 +927,10 @@ export class Transcriber {
     // se insiste: le "risposte" restano testo, sotto la riga a cui le collegava (o in fondo)
     if (noArrows()) {
       for (const r of result.replies) {
-        const at = result.lines.findIndex((l) => looseText(l.text) && looseText(l.text) === looseText(r.to));
+        let at = result.lines.findIndex((l) => looseText(l.text) && looseText(l.text) === looseText(r.to));
         const line: TranscribedLine = { kind: "text", text: r.text, checked: false, due: "" };
+        // la riga è subito prima di un disegno con scritte accanto: è la prima di quelle scritte
+        if (at >= 0 && /^\[\[drawing \d+\]\]$/.test(result.lines[at + 1]?.text.trim() ?? "")) at++;
         if (at >= 0) result.lines.splice(at + 1, 0, line);
         else result.lines.push(line);
       }
@@ -928,6 +974,16 @@ export class Transcriber {
       const d = new Date(`${today}T12:00:00`);
       d.setDate(d.getDate() + add);
       l.due = d.toLocaleDateString("sv-SE");
+    }
+
+    // "aereo domani alle 14:20" → task "aereo", 📅 domani, ore 14:20: le parole della data e dell'orario non restano nel titolo
+    for (const l of result.lines) {
+      if (l.kind !== "task") continue;
+      let t = l.text;
+      if (l.time) t = t.replace(/(^|\s)(?:alle|ore|dalle)\s*$/i, "$1").replace(/(^|\s)(?:alle|ore|dalle)(?=\s)/i, "$1");
+      if (l.due) t = t.replace(/(^|\s)(?:oggi|domani|dopodomani)(?=\s|$)/i, "$1");
+      t = t.replace(/\s{2,}/g, " ").trim();
+      if (t) l.text = t;
     }
 
     // Pagina che continua un'altra nota: un titolo dato come page_title è il primo "== titolo"
@@ -1003,10 +1059,14 @@ export class Transcriber {
 
     // Pagina nuova che comincia con un titolo (niente testo prima): quel titolo è il titolo della pagina, così non
     // nasce una nota «Quaderno N - pagina M» vuota
-    if (!routed && !result.page_title && !this.router.isContinuation(key) && groups.length > 1 && !groups[0].lines.some((l) => l.text.trim())) {
+    // (sopra il titolo può esserci solo il suo #tag: "#cinema" e sotto "Cortometraggio" sottolineato due volte)
+    const tagsOnly = (t: string) => !t.replace(/#[\p{L}\p{N}_\-/]+/gu, "").replace(/[*\s#]/g, "");
+    if (!routed && !result.page_title && !this.router.isContinuation(key) && groups.length > 1 && groups[0].lines.every((l) => tagsOnly(l.text))) {
+      const above = groups[0].lines.flatMap((l) => [...l.text.matchAll(/#([\p{L}\p{N}_\-/]+)/gu)].map((m) => m[1].toLowerCase()));
       const first = groups.splice(1, 1)[0];
       result.page_title = first.title ?? "";
-      if (first.tag && !result.page_tag) result.page_tag = first.tag;
+      const tag = first.tag || above.find((t) => this.router.ruleFor(t)) || "";
+      if (tag && !result.page_tag) result.page_tag = tag;
       groups[0].lines = first.lines;
       this.log(`Pagina ${key.page}: comincia con il titolo «${result.page_title}», è il titolo della pagina.`);
     }
@@ -1089,7 +1149,7 @@ export class Transcriber {
     // La nota della pagina non c'è (mai fatta, o cancellata da te) e in cima alla pagina non c'è niente da metterci
     // (solo spunte, cancellature, testo sotto un titolo a metà pagina): non si crea una nota «Quaderno N - pagina M»
     // vuota, si lavora nelle altre parti della pagina.
-    const homeEmpty = !groups[0].lines.some((l) => l.text.trim()) && !result.page_title && !result.page_tag;
+    const homeEmpty = groups[0].lines.every((l) => tagsOnly(l.text)) && !result.page_title && !result.page_tag;
     const otherParts = routed ? [] : this.router.segmentsOf(key);
     if (!routed && homeEmpty && otherParts.length) {
       routed = otherParts[0];
@@ -1177,6 +1237,105 @@ export class Transcriber {
       result.deleted_text = result.deleted_text.filter((d) => !spared.includes(d));
     }
 
+    // Cancellato solo l'orario di un appuntamento ("lavoro alle 23:00" con "alle 23:00" cancellato): l'inizio della
+    // riga resta, quindi il task resta, senza orario (torna un'attività). Non si toglie la riga intera.
+    if (result.deleted_text.length && report.red.length) {
+      const boxStrokes = new Set(boxes.flatMap((b) => b.strokes));
+      const old = visible.filter((st) => !newSet.has(st.t) && !gone.has(st) && !boxStrokes.has(st));
+      const heights = old.map((st) => strokeBounds([st])!).map((b) => b.maxY - b.minY).filter((h) => h > 0.3 && h < 4).sort((a, b) => a - b);
+      const H = heights.length ? heights[Math.floor(heights.length / 2)] : 1.2;
+      const partial = report.red.every((r) => {
+        const rb = strokeBounds([r])!;
+        const left = old.filter((st) => {
+          const b = strokeBounds([st])!;
+          const cy = (b.minY + b.maxY) / 2;
+          // le lettere della riga a sinistra della cancellatura, non toccate da lei
+          return cy > rb.minY - 0.3 * H && cy < rb.maxY + 0.3 * H && b.maxX < rb.minX + 0.2 * H && b.maxX > rb.minX - 12 * H;
+        });
+        if (left.length < 2) return false;
+        const lb = strokeBounds(left)!;
+        return lb.maxX - lb.minX >= 1.5 * H;
+      });
+      if (partial) {
+        // solo l'orario tra le parole cancellate ("alle 23:00"): la riga con quell'orario nella nota
+        const bare = /^(?:alle|ore|dalle|h)?\s*(\d{1,2})[:.](\d{2})$/i;
+        for (const d of [...result.deleted_text]) {
+          const m = bare.exec(d.trim());
+          if (!m) continue;
+          const hm = `${m[1].padStart(2, "0")}:${m[2]}`;
+          for (const sg of this.router.segmentsOf(key)) {
+            const line = readBlock(await this.app.vault.read(sg.file), sg.blockId)
+              .split("\n")
+              .find((l) => new RegExp(`^\\s*- \\[[ xX]\\] ${hm}\\s`).test(l));
+            if (line) {
+              result.deleted_text = result.deleted_text.map((x) => (x === d ? line.trim() : x));
+              break;
+            }
+          }
+        }
+        // Claude ha indicato le parole che restano (o la riga intera): la riga del task nella nota con quelle parole
+        const taskWords = (l: string) =>
+          looseText(l.replace(/^\s*(?:-\s*)?\[[ xX]\]\s*/, "").replace(/^\d{1,2}[:.]\d{2}(?:\s*-\s*\d{1,2}[:.]\d{2})?\s+/, "").replace(/\s*📅.*$/, ""));
+        const noteLines: string[] = [];
+        for (const sg of this.router.segmentsOf(key)) noteLines.push(...readBlock(await this.app.vault.read(sg.file), sg.blockId).split("\n"));
+        for (const d of [...result.deleted_text]) {
+          const w = taskWords(d);
+          if (!w) continue;
+          const line = noteLines.find((l) => /^\s*- \[[ xX]\]/.test(l) && taskWords(l) === w);
+          if (!line) continue;
+          if (/^\s*- \[[ xX]\]\s*\d{1,2}:\d{2}/.test(line)) result.deleted_text = result.deleted_text.map((x) => (x === d ? line.trim() : x));
+          else {
+            // un task senza orario con l'inizio della riga non cancellato: le sue parole restano
+            result.deleted_text = result.deleted_text.filter((x) => x !== d);
+            this.log(`Non cancello «${d}»: la cancellatura copre solo la fine della riga.`);
+          }
+        }
+        const timed = /^\s*(?:-\s*)?\[([ xX])\]\s*(\d{1,2}[:.]\d{2}(?:\s*-\s*\d{1,2}[:.]\d{2})?)\s+(.+)$/;
+        for (const d of [...result.deleted_text]) {
+          const m = timed.exec(d.trim()) ?? timed.exec(`[ ] ${d.trim()}`);
+          if (!m) continue;
+          const rest = m[3].replace(/\s*📅.*$/, "").replace(/\s*(?:alle|ore|dalle)\s*$/i, "").trim();
+          const due = /📅\s*(\d{4}-\d{2}-\d{2})/.exec(m[3])?.[1];
+          if (!rest) continue;
+          result.deleted_text = result.deleted_text.filter((x) => x !== d);
+          result.corrections.push({ old_line: d, new_line: `[${m[1]}] ${rest}${due ? ` 📅 ${due}` : ""}` });
+          this.log(`«${rest}»: cancellato solo l'orario (${m[2]}), resta come attività.`);
+        }
+      }
+    }
+
+    // Una riga già scritta che ora diventa un task o prende un orario (casella disegnata prima di "mangia", "alle 23:00"
+    // aggiunto dopo): si aggiorna quella riga, non se ne aggiunge un'altra
+    const upgrades: { old: string; md: string; seg: string }[] = [];
+    if (!force) {
+      const words = (t: string) =>
+        looseText(
+          t
+            .replace(/^\s*- \[[ xX]\]\s*/, "")
+            .replace(/^\s*-\s+/, "")
+            .replace(/^\d{1,2}[:.]\d{2}(?:-\d{1,2}[:.]\d{2})?\s+/, "")
+            .replace(/\s*📅.*$/, "")
+            .replace(/\s*(?:alle|ore|dalle)\s*\d{1,2}(?:[:.]\d{2})?\s*$/i, "")
+        );
+      for (const sg of segs) {
+        const have = readBlock(await this.app.vault.read(sg.file), sg.blockId).split("\n");
+        for (const l of [...result.lines]) {
+          if (l.kind !== "task") continue;
+          const w = words(l.text);
+          if (w.length < 3) continue;
+          const old = have.find((x) => {
+            if (!x.trim() || words(x) !== w) return false;
+            const isTask = /^\s*- \[[ xX]\]/.test(x);
+            const hasTime = /^\s*- \[[ xX]\]\s*\d{1,2}:\d{2}/.test(x);
+            return !isTask || (!hasTime && !!l.time);
+          });
+          if (!old) continue;
+          result.lines.splice(result.lines.indexOf(l), 1);
+          upgrades.push({ old, md: linesToMarkdown([l]), seg: sg.blockId });
+          this.log(`«${old.trim()}» → «${linesToMarkdown([l])}» (casella o orario aggiunti sulla carta).`);
+        }
+      }
+    }
     // 1) testo nuovo nella sua parte della pagina. Una riga identica a una già presente in quel blocco è una rilettura
     //    del testo grigio (Claude l'ha riscritta): non si duplica.
     if (!force && result.lines.length) {
@@ -1225,10 +1384,11 @@ export class Transcriber {
     const notesTouched = new Set<string>();
     if (!force) {
       const pendingFix = [...result.corrections];
-      let toCheck = [...result.checked_tasks];
+      // "[ ] 13:20 aereo", "- [x] pane": la casella copiata da Claude non fa parte del testo del task
+      let toCheck = result.checked_tasks.map((t) => t.replace(/^\s*(?:-\s*)?\[[ xX✓✔]?\]\s*/, "").trim()).filter(Boolean);
       for (const fuzzy of [false, true]) {
         for (const sg of segs) {
-          if (!toCheck.length && (fuzzy || (!result.deleted_text.length && !pendingFix.length))) break;
+          if (!toCheck.length && (fuzzy || (!result.deleted_text.length && !pendingFix.length && !upgrades.length))) break;
           await this.app.vault.process(sg.file, (content) => {
             let next = content;
             if (!fuzzy) {
@@ -1247,6 +1407,10 @@ export class Transcriber {
                 fixed.push(newMd.replace(/^- \[[ xX]\] /, ""));
                 pendingFix.splice(pendingFix.indexOf(c), 1);
               }
+            }
+            for (const u of upgrades.filter((x) => x.seg === sg.blockId && !fuzzy)) {
+              const r = replaceLineInBlock(next, u.old, u.md, sg.blockId);
+              if (r.found) next = r.content;
             }
             // spunte: prima la corrispondenza esatta in tutte le parti, poi quella "somigliante"
             const r = checkTasksInBlock(next, toCheck, sg.blockId, fuzzy);

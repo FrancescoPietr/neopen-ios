@@ -192,3 +192,33 @@ export function taskLines(blocks: string[]): { text: string; done: boolean }[] {
     }
   return out;
 }
+
+/**
+ * Le righe di scrittura tra i tratti dati (dall'alto): gruppi di tratti alla stessa altezza. Le code delle lettere
+ * (g, p) non contano: si guarda il centro dei tratti piccoli. Serve a capire se Claude ha unito due righe in una.
+ */
+export function writtenRows(strokes: Stroke[], all: Stroke[]): { y0: number; y1: number; yc: number; x0: number; x1: number }[] {
+  const H = letterHeight(all.filter(ink));
+  const items = strokes
+    .filter(ink)
+    .map((s) => bounds([s]))
+    .filter((b) => b.y1 - b.y0 < 2.5 * H && b.x1 - b.x0 < 12 * H)
+    // sottolineature e linee lunghe e piatte: non sono una riga di parole
+    .filter((b) => !(b.x1 - b.x0 > 3 * H && b.y1 - b.y0 < 0.4 * (b.x1 - b.x0)))
+    .map((b) => ({ ...b, c: (b.y0 + b.y1) / 2 }))
+    .sort((a, b) => a.c - b.c);
+  const rows: { y0: number; y1: number; yc: number; x0: number; x1: number; n: number; sum: number }[] = [];
+  for (const it of items) {
+    const r = rows[rows.length - 1];
+    if (r && it.c - r.sum / r.n < 1.3 * H) {
+      r.n++;
+      r.sum += it.c;
+      r.y0 = Math.min(r.y0, it.y0);
+      r.y1 = Math.max(r.y1, it.y1);
+      r.x0 = Math.min(r.x0, it.x0);
+      r.x1 = Math.max(r.x1, it.x1);
+    } else rows.push({ y0: it.y0, y1: it.y1, yc: 0, x0: it.x0, x1: it.x1, n: 1, sum: it.c });
+  }
+  // una riga vera ha qualche tratto (non un puntino isolato)
+  return rows.filter((r) => r.n >= 2).map((r) => ({ y0: r.y0, y1: r.y1, yc: r.sum / r.n, x0: r.x0, x1: r.x1 }));
+}

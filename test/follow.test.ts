@@ -63,3 +63,18 @@ test("follow: a timed task written with the pen is an appointment (shown as an e
   // "18:00 fuori dal blocco" is written in Obsidian: it stays a task
   assert.ok(tasks.some((t) => t.title === "fuori dal blocco" && !isPenAppointment(t, blocks)));
 });
+
+test("follow: time moved from one task to another, a time struck through, a tick (page 17 of 26/10)", () => {
+  const before = read(daily("mangia\n- [ ] 23:00 lavoro\n- [ ] 13:20 aereo 📅 2026-10-27"));
+  const after = read(daily("- [ ] 23:00 mangia\n- [ ] lavoro\n- [x] 13:20 aereo 📅 2026-10-27"));
+  assert.deepEqual(diffPenTimed(before, after, 6, "2026-10-23"), [
+    { kind: "delete", title: "lavoro", date: "2026-10-23", time: "23:00" },
+    { kind: "create", title: "mangia", date: "2026-10-23", time: "23:00", end: null, file: "Daily/2026-10-23.md" },
+  ]);
+  // lavoro is a task again (no time); the ticked appointment stays an appointment (its event gets the ✓)
+  const path = "Daily/2026-10-23.md";
+  const text = daily("- [ ] 23:00 mangia\n- [ ] lavoro\n- [x] 13:20 aereo 📅 2026-10-27");
+  const blocks = penBlockLines([{ path, text }]);
+  const tasks = parseTasks(text, { path, dailyDate: "2026-10-23" });
+  assert.deepEqual(tasks.filter((t) => !isPenAppointment(t, blocks)).map((t) => t.title), ["lavoro", "fuori dal blocco"]);
+});

@@ -169,3 +169,22 @@ test("engine: a time written inside the line makes it an appointment ('andare a 
   assert.match(daily, /- \[ \] 13:30 Andare in palestra/, daily);
   assert.match(daily, /- \[ \] guardare minuto 1:26/, daily);
 });
+
+test("engine: a box or a time added later to a line already written updates that line (no second copy)", async () => {
+  const { io } = vault();
+  const answers = [answer(["mangia", "[ ] 23:00 lavoro"]), answer(["[ ] mangia alle 23:00"])];
+  let n = 0;
+  const log: string[] = [];
+  const opts = {
+    ...options(io, {}, { n: 0 }, log),
+    request: async () => ({ status: 200, text: JSON.stringify({ content: [{ type: "text", text: JSON.stringify(answers[Math.min(n++, 1)]) }], usage: { input_tokens: 1, output_tokens: 1 } }) }),
+  };
+  const first = page(26, 2);
+  assert.equal((await transcribePages(opts, [{ key: key(24), strokes: first }])).status, "ok", log.join("\n"));
+  const more = [...first, word(at(26, 10), 30, 0), word(at(26, 10) + 1000, 39, 0)];
+  assert.equal((await transcribePages(opts, [{ key: key(24), strokes: more }])).status, "ok", log.join("\n"));
+  const daily = io.read("Daily/2026-10-26.md")!;
+  assert.match(daily, /- \[ \] 23:00 mangia\n/, daily);
+  assert.doesNotMatch(daily, /^mangia$/m, daily);
+  assert.equal(daily.match(/mangia/g)?.length, 1, daily);
+});
