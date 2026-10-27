@@ -55,6 +55,8 @@ interface Transfer {
   damaged: boolean;
   abort: boolean;
   lastActivity: number;
+  /** Index of the last packet: it is acknowledged only after the strokes are saved on the phone. */
+  lastIndex?: number;
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -123,10 +125,6 @@ export class PenSession {
         t.count = e.strokes;
         t.bytes = e.bytes;
         t.lastActivity = Date.now();
-        if (this.options.skipUnchanged) {
-          const r = this.store.record(t.key);
-          if (e.strokes > 0 && r.penCount === e.strokes && r.penBytes === e.bytes && r.strokes.length) t.abort = true;
-        }
         break;
       }
       case "offlineFailure":
@@ -140,15 +138,14 @@ export class PenSession {
           return;
         }
         t.lastActivity = Date.now();
-        if (t.abort) {
-          if (!e.last) this.link?.send(PenRequest.offlineAck(e.index, true, true));
-          t.done = true;
-          return;
-        }
         if (e.damaged) t.damaged = true;
         for (const s of e.strokes) if (sameKey(s.key, t.key)) t.strokes.push(s.stroke);
-        if (e.last) t.done = true;
-        else this.link?.send(PenRequest.offlineAck(e.index));
+        if (e.last) {
+          // the last packet too gets its acknowledgement (like the official SDK): without it the pen does not close
+          // the transfer and, with "empty the pen", does not delete the page. Sent once the strokes are saved.
+          t.lastIndex = e.index;
+          t.done = true;
+        } else this.link?.send(PenRequest.offlineAck(e.index));
         break;
       }
       case "liveStroke": {
@@ -273,11 +270,10 @@ export class PenSession {
           if (Date.now() - t.lastActivity > 15000) throw timeoutError(`la penna ha smesso di mandare la pagina ${keyLabel(key)}`);
           await sleep(50);
         }
-        if (t.abort) {
-          await sleep(400);
-          return { kind: "unchanged" };
+        if (!t.strokes.length) {
+          this.ackLast(t, false);
+          continue;
         }
-        if (!t.strokes.length) continue;
         const r = this.store.record(key);
         const added = mergeStrokes(r, t.strokes);
         if (!t.damaged) {
@@ -285,6 +281,9 @@ export class PenSession {
           r.penBytes = t.bytes;
         }
         this.store.save(r);
+        // saved on the phone: now the pen may close the transfer (and delete the page if asked). A damaged page is
+        // not confirmed, so the pen keeps it and sends it again next time.
+        this.ackLast(t, !t.damaged);
         if (added > 0) this.note({ type: "pageUpdated", key, newStrokes: added });
         return { kind: "read", count: t.count, newStrokes: added };
       } finally {
@@ -292,6 +291,16 @@ export class PenSession {
       }
     }
     return { kind: "empty" };
+  }
+
+  private ackLast(t: Transfer, ok: boolean): void {
+    if (t.lastIndex === undefined || this.closed) return;
+    try {
+      this.link?.send(PenRequest.offlineAck(t.lastIndex, ok, true));
+    } catch {
+      /* link closed: the pen keeps the page, it comes again next time */
+    }
+    t.lastIndex = undefined;
   }
 
   /**

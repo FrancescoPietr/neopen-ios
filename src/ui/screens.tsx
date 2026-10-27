@@ -291,13 +291,11 @@ export function SettingsScreen() {
         footer={
           "Tempo reale: mentre la penna è collegata ogni tratto arriva subito (la penna allora non lo salva in memoria: lo salva il telefono).\n" +
           "Svuota la penna: la memoria della penna si cancella dopo che le pagine sono sul telefono, così ogni collegamento scarica solo le novità.\n" +
-          "Salta le invariate: più veloce, ma con Bluefy la penna smetteva di rispondere; provalo e guarda il registro.\n" +
           "Valgono dal collegamento successivo."
         }
       >
         <Toggle label="Tratti in tempo reale" value={st.live} onChange={(v) => model.update({ live: v })} />
         <Toggle label="Svuota la penna dopo lo scaricamento" value={st.deleteAfterDownload} onChange={(v) => model.update({ deleteAfterDownload: v })} />
-        <Toggle label="Salta le pagine invariate (prova)" value={st.skipUnchanged} onChange={(v) => model.update({ skipUnchanged: v })} />
         <TextInput
           style={s.input}
           value={st.penPassword}

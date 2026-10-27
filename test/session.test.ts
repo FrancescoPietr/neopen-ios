@@ -42,9 +42,10 @@ test("full sync, then nothing new; archive survives a restart", async () => {
   assert.deepEqual(pen.requestedPages, [k9, k5, other]);
   assert.deepEqual(store.record(k9).strokes, makeStrokes(10, 1_792_370_000_000));
   assert.equal(store.record(k9).penCount, 10);
-  // 10 strokes at 3 per packet = 4 packets, 3 acks; 7 → 3 packets, 2; 2 → 1, 0
+  // 10 strokes at 3 per packet = 4 packets, 3 acks; 7 → 3 packets, 2; 2 → 1, 0; and the last packet of each page
+  // is acknowledged too, closing the transfer (after the page is saved)
   assert.equal(pen.acks, 5);
-  assert.equal(pen.endAcks, 0);
+  assert.equal(pen.endAcks, 3);
   assert.equal(pen.deletedPages.length, 0, "without the option nothing is deleted from the pen");
   assert.equal(notes.length, 3);
   assert.deepEqual(await s.syncMemory(), { pages: 0, newStrokes: 0 });
@@ -136,18 +137,6 @@ test("delete after download", async () => {
   assert.equal(store.record(k9).strokes.length, 4);
   assert.equal((await s.syncMemory()).pages, 0);
   assert.equal(pen.memory.size, 0);
-});
-
-test("skip unchanged sends an end ack", async () => {
-  const pen = new FakePen();
-  pen.put(k9, makeStrokes(9, 1_792_370_000_000));
-  const s = connect(pen, new PageStore(new MemoryFiles()), { skipUnchanged: true });
-  await s.start();
-  await s.syncMemory();
-  const before = pen.acks;
-  assert.deepEqual(await s.download(k9), { kind: "unchanged" });
-  assert.equal(pen.endAcks, 1);
-  assert.equal(pen.acks, before);
 });
 
 test("timeout when the pen doesn't answer", async () => {

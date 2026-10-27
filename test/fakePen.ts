@@ -35,6 +35,7 @@ export class FakePen implements PenLink {
   endAcks = 0;
   requestedPages: PageKey[] = [];
   deletedPages: PageKey[] = [];
+  private pendingRemove: PageKey | null = null;
   liveOn = false;
   clockSet = 0;
   private packetsSent = 0;
@@ -103,7 +104,13 @@ export class FakePen implements PenLink {
       }
       case 0xa4: {
         r.short();
-        if (r.byte() === 1) { this.acks++; this.sendNext(); } else { this.endAcks++; this.queue = []; }
+        if (r.byte() === 1) { this.acks++; this.sendNext(); } else {
+          this.endAcks++;
+          // like the real pen: the page is deleted only when the transfer is closed after the last packet
+          if (!this.queue.length && this.pendingRemove) { this.deletedPages.push(this.pendingRemove); this.memory.delete(pageId(this.pendingRemove)); }
+          this.pendingRemove = null;
+          this.queue = [];
+        }
         return;
       }
     }
@@ -134,7 +141,7 @@ export class FakePen implements PenLink {
       const pos = groups.length === 1 ? 2 : idx === 0 ? 0 : idx === groups.length - 1 ? 2 : 1;
       return packet(0x24, [...le16(idx), 0, ...le16(raw.length), ...le16(0), pos, ...so(key.section, key.owner), ...le32(key.note), ...le16(g.length), ...raw], null);
     });
-    if (remove) { this.deletedPages.push(key); this.memory.delete(id); }
+    this.pendingRemove = remove ? key : null;
     this.reply(packet(0xa3, [...le32(strokes.length), ...le32(total), 0]));
     this.sendNext();
   }

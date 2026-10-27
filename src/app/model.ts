@@ -7,6 +7,7 @@ import { PenSession, SessionError, SessionNote } from "../core/session";
 import { RelayClient } from "../core/relay";
 import { BackgroundRelayClient } from "./backgroundRelay";
 import { PageNotes } from "./pageNotes";
+import { alerts } from "./alerts";
 import { PhoneEvents } from "./phoneEvents";
 import { agenda } from "./agenda";
 import { startOutputs } from "./outputs";
@@ -180,13 +181,14 @@ class AppModel {
     const s = new PenSession(this.store, {
       live: this.settings.live,
       deleteAfterDownload: this.settings.deleteAfterDownload,
-      skipUnchanged: this.settings.skipUnchanged,
+      skipUnchanged: false,
       password: this.settings.penPassword,
     });
     s.link = { send: (bytes) => NeoPenBle.send(toBase64(bytes)) };
     s.log = (m) => this.write(m);
     s.note = (n) => this.sessionNote(n);
     this.session = s;
+    this.memoryRead = false;
     this.phase = { kind: "handshake" };
     this.emit();
     const id = NeoPenBle.beginBackgroundTask("scaricamento dalla penna");
@@ -217,7 +219,17 @@ class AppModel {
     })();
   }
 
+  /** The pen memory of this connection has been read to the end. */
+  private memoryRead = false;
+
   private penClosed(): void {
+    // the pen went off before the phone could read its memory: what you wrote while it was off is still in the pen
+    // (anche quando si è spenta prima ancora di presentarsi: la sessione allora non c'è nemmeno)
+    if (!this.memoryRead) {
+      this.write("La penna si è spenta prima di passarmi la sua memoria: quello che hai scritto è ancora nella penna. Aprila qualche secondo vicino al telefono.");
+      void alerts.now("penna-spenta", "La penna si è spenta troppo presto", "Quello che hai scritto è ancora nella penna: togli il cappuccio qualche secondo vicino al telefono.", 20);
+    }
+    this.memoryRead = false;
     this.session?.linkClosed();
     this.session = null;
     if (this.phase.kind !== "needsPassword") this.phase = { kind: "idle" };
@@ -254,6 +266,7 @@ class AppModel {
         this.pageNotes.strokesArrived();
         break;
       case "syncFinished":
+        this.memoryRead = true;
         this.write(n.pages > 0 ? `Memoria della penna letta: ${n.pages} pagine con ${n.newStrokes} tratti nuovi.` : "Memoria della penna letta: niente di nuovo.");
         break;
       case "powerOff":

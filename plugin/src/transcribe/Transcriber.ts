@@ -563,6 +563,13 @@ export class Transcriber {
     }
   }
 
+  /** Task scritti in un giorno diverso da quello della nota del giorno in cui finiscono: prendono il giorno in cui li hai scritti. */
+  private dateForToday(lines: TranscribedLine[], noteBase: string, today: string): void {
+    const day = /^(\d{4}-\d{2}-\d{2})$/.exec(noteBase)?.[1];
+    if (!day || day === today) return;
+    for (const l of lines) if (l.kind === "task" && !l.due) l.due = today;
+  }
+
   /** Dove sta sulla carta ogni riga appena scritta nella nota (dai rettangoli delle righe dati da Claude). */
   private recordRows(pid: string, bid: string, lines: TranscribedLine[], png: { ox: number; oy: number; scale: number }): void {
     const rows = this.settings().lineRows;
@@ -725,8 +732,13 @@ export class Transcriber {
         if (nt && !/📅/.test(fixed) && ot !== `${nt[1]}:${nt[2]}` && Number.isFinite(writtenAt)) {
           const w = new Date(writtenAt);
           const noteDay = /^(\d{4}-\d{2}-\d{2})$/.exec(target.seg.file.basename)?.[1];
-          if ((!noteDay || noteDay === today) && Number(nt[1]) * 60 + Number(nt[2]) + 15 < w.getHours() * 60 + w.getMinutes()) {
+          const passed = Number(nt[1]) * 60 + Number(nt[2]) + 15 < w.getHours() * 60 + w.getMinutes();
+          if (passed) {
             fixed += ` 📅 ${new Date(w.getFullYear(), w.getMonth(), w.getDate() + 1, 12).toLocaleDateString("sv-SE")}`;
+            inferred = true;
+          } else if (noteDay && noteDay !== today) {
+            // nella nota di ieri, ma l'orario l'hai scritto oggi: è di oggi
+            fixed += ` 📅 ${today}`;
             inferred = true;
           }
         }
@@ -1630,6 +1642,9 @@ export class Transcriber {
     // task che il telefono aveva già messo nella nota del giorno: la trascrizione prende il loro posto
     // (in tutte le parti della pagina: anche i task sotto un titolo a metà pagina, es. "#task Task")
     if (!force) await adoptPhoneTasks(this.app, [...result.lines, ...groups.slice(1).flatMap((g) => g.lines)], (m) => this.log(`Pagina ${key.page}: ${m}`));
+    // la pagina scrive nella nota del giorno in cui è cominciata ("2026-10-26"), ma queste righe le hai scritte oggi:
+    // senza un giorno sulla carta, sono di oggi (un appuntamento "alle 9:00" scritto stanotte è di oggi, non di ieri)
+    if (target.kind === "daily") this.dateForToday(result.lines, target.file.basename, today);
     const md = linesToMarkdown(result.lines);
     this.recordRows(pid, target.blockId, result.lines, png);
     /** Cosa è stato scritto in quale nota (per mettere i #tag nella nota giusta). */
@@ -1729,7 +1744,6 @@ export class Transcriber {
     const usedSegs = new Set<string>();
     for (let k = 1; k < groups.length; k++) {
       const g = groups[k];
-      let gmd = linesToMarkdown(g.lines);
       const gLines = g.lines;
       let seg: RoutedNote;
       // ritrascrivi da capo: si riusa la nota già creata per lo stesso titolo (non "la k-esima": se un titolo
@@ -1744,6 +1758,8 @@ export class Transcriber {
       }
       after = seg.blockId;
       usedSegs.add(seg.blockId);
+      if (seg.kind === "daily") this.dateForToday(gLines, seg.file.basename, today);
+      let gmd = linesToMarkdown(gLines);
       this.recordRows(pid, seg.blockId, gLines, png);
       // parte mandata nella nota del giorno (#task accanto al titolo): la nota resta col nome della data,
       // il titolo scritto a mano resta come etichetta in grassetto sopra i suoi task

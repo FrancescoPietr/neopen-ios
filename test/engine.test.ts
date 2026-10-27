@@ -188,3 +188,22 @@ test("engine: a box or a time added later to a line already written updates that
   assert.doesNotMatch(daily, /^mangia$/m, daily);
   assert.equal(daily.match(/mangia/g)?.length, 1, daily);
 });
+
+test("engine: lines written today into yesterday's daily note (the page started yesterday) are for today", async () => {
+  const { io } = vault();
+  const answers = [answer(["[ ] dormire"]), answer(["[ ] 09:00 viaggiare", "[ ] esportare"])];
+  let n = 0;
+  const log: string[] = [];
+  const opts = {
+    ...options(io, {}, { n: 0 }, log),
+    request: async () => ({ status: 200, text: JSON.stringify({ content: [{ type: "text", text: JSON.stringify(answers[Math.min(n++, 1)]) }], usage: { input_tokens: 1, output_tokens: 1 } }) }),
+  };
+  const first = [word(at(26, 23, 16), 10, 0), word(at(26, 23, 16) + 1000, 19, 0)];
+  assert.equal((await transcribePages(opts, [{ key: key(25), strokes: first }])).status, "ok", log.join("\n"));
+  const more = [...first, word(at(27, 1, 18), 10, 2), word(at(27, 1, 18) + 1000, 19, 2)];
+  assert.equal((await transcribePages(opts, [{ key: key(25), strokes: more }])).status, "ok", log.join("\n"));
+  const daily = io.read("Daily/2026-10-26.md")!;
+  assert.match(daily, /- \[ \] dormire\n/, daily);
+  assert.match(daily, /- \[ \] 09:00 viaggiare 📅 2026-10-27/, daily);
+  assert.match(daily, /- \[ \] esportare 📅 2026-10-27/, daily);
+});
