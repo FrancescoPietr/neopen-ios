@@ -729,9 +729,12 @@ export class Transcriber {
         // un orario appena aggiunto (o cambiato) già passato quando l'hai scritto, senza un giorno: è domani
         const nt = /^- \[[ xX]\] (\d{2}):(\d{2})/.exec(fixed);
         const ot = /^\s*- \[[ xX]\] (\d{2}:\d{2})/.exec(target.text)?.[1];
-        if (nt && !/📅/.test(fixed) && ot !== `${nt[1]}:${nt[2]}` && Number.isFinite(writtenAt)) {
+        const noteDay = /^(\d{4}-\d{2}-\d{2})$/.exec(target.seg.file.basename)?.[1];
+        // un appuntamento senza giorno nella nota di un giorno passato, toccato oggi sulla carta: è per oggi (o domani se
+        // l'ora è già passata), anche se l'orario c'era già (righe scritte prima di questa versione)
+        const staleDay = !!noteDay && noteDay < today;
+        if (nt && !/📅/.test(fixed) && (ot !== `${nt[1]}:${nt[2]}` || staleDay) && Number.isFinite(writtenAt)) {
           const w = new Date(writtenAt);
-          const noteDay = /^(\d{4}-\d{2}-\d{2})$/.exec(target.seg.file.basename)?.[1];
           const passed = Number(nt[1]) * 60 + Number(nt[2]) + 15 < w.getHours() * 60 + w.getMinutes();
           if (passed) {
             fixed += ` 📅 ${new Date(w.getFullYear(), w.getMonth(), w.getDate() + 1, 12).toLocaleDateString("sv-SE")}`;
