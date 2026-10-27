@@ -96,6 +96,19 @@ export const alerts = {
     return plan;
   },
 
+  /** An alert right away (e.g. Claude's credit ran out), at most once every `minutes` for the same id. */
+  async now(id: string, title: string, body: string, minutes = 60): Promise<void> {
+    try {
+      const last = readJson<Record<string, number>>("avvisi-subito.json", {});
+      if (Date.now() - (last[id] ?? 0) < minutes * 60_000) return;
+      if (!(await this.ensurePermission(false))) return;
+      await Notifications.scheduleNotificationAsync({ content: { title, body, sound: "default" }, trigger: null });
+      writeJson("avvisi-subito.json", { ...last, [id]: Date.now() });
+    } catch {
+      /* not important */
+    }
+  },
+
   /** A test alert in 5 seconds. */
   async test(): Promise<boolean> {
     if (!(await this.ensurePermission(true))) return false;

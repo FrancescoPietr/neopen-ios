@@ -7,6 +7,8 @@
 import { Stroke } from "../types";
 
 export interface TaskBox {
+  /** Casella e spunta disegnate con un tratto solo. */
+  ticked?: boolean;
   x0: number;
   y0: number;
   x1: number;
@@ -72,16 +74,18 @@ export function letterHeight(all: Stroke[]): number {
  * Un quadratino: largo e alto quasi uguale, il tratto corre lungo i quattro lati (i quattro angoli toccati e quasi
  * nessun punto in mezzo), il giro è lungo circa quanto il perimetro. Una «o» o una «a» non tocca gli angoli.
  */
-function isBoxShape(strokes: Stroke[], H: number): B | null {
+function isBoxShape(strokes: Stroke[], H: number, relaxed = false): (B & { ticked?: boolean }) | null {
   const b = bounds(strokes);
   const w = b.x1 - b.x0;
   const h = b.y1 - b.y0;
   const size = Math.max(w, h);
-  if (size < 0.55 * H || size > 3.2 * H || w < 0.75 * h || h < 0.75 * w) return null;
+  // fatta a mano in fretta: un po' storta, un po' più larga che alta (o il contrario)
+  const aspect = relaxed ? 0.6 : 0.75;
+  if (size < 0.55 * H || size > 3.2 * H || w < aspect * h || h < aspect * w) return null;
   const pts = points(strokes);
   if (pts.length < 8) return null;
   const L = pathLen(strokes);
-  if (L < 1.6 * (w + h) || L > 3 * (w + h)) return null;
+  if (L < (relaxed ? 1.3 : 1.6) * (w + h) || L > (relaxed ? 4.2 : 3) * (w + h)) return null;
   // gli angoli: tre ben toccati, il quarto (dove la penna parte e chiude) almeno sfiorato
   const corner = [
     [b.x0, b.y0],
@@ -91,12 +95,16 @@ function isBoxShape(strokes: Stroke[], H: number): B | null {
   ]
     .map(([cx, cy]) => Math.min(...pts.map((p) => Math.hypot(p.x - cx, p.y - cy))) / size)
     .sort((a, c) => a - c);
-  if (corner[2] > 0.2 || corner[3] > 0.36) return null;
+  // (un cerchio o una «o» non tocca davvero nessun angolo: almeno due angoli ben presi anche a mano libera)
+  if (corner[1] > 0.15 || corner[2] > (relaxed ? 0.3 : 0.2) || corner[3] > (relaxed ? 0.5 : 0.36)) return null;
   // i punti stanno sui lati (righe quasi dritte), non dentro
   const edge = 0.12 * size;
-  const onEdge = pts.filter((p) => p.x - b.x0 < edge || b.x1 - p.x < edge || p.y - b.y0 < edge || b.y1 - p.y < edge).length;
-  if (onEdge / pts.length < 0.78) return null;
-  return b;
+  const onEdge = pts.filter((p) => p.x - b.x0 < edge || b.x1 - p.x < edge || p.y - b.y0 < edge || b.y1 - p.y < edge).length / pts.length;
+  if (onEdge >= (relaxed ? 0.6 : 0.78)) return b;
+  // casella e spunta fatte con lo stesso tratto ("☑"): il giro della casella più una V dentro (più lungo del
+  // perimetro, molti punti in mezzo)
+  if (relaxed && L > 2.4 * (w + h) && onEdge >= 0.35 && corner[2] <= 0.25) return { ...b, ticked: true };
+  return null;
 }
 
 /**
@@ -115,7 +123,9 @@ export function findTaskBoxes(old: Stroke[], all: Stroke[]): TaskBox[] {
     for (let n = 1; n <= 2 && i + n <= ok.length; n++) {
       const group = ok.slice(i, i + n);
       if (n > 1 && group[n - 1].t - group[n - 2].t > 4000) break;
-      const b = isBoxShape(group, H);
+      // la posizione (all'inizio della riga, staccata dalla scritta) conferma che è una casella: la forma può
+      // essere approssimativa
+      const b = isBoxShape(group, H, true);
       if (!b) continue;
       const size = Math.max(b.x1 - b.x0, b.y1 - b.y0);
       const cy = (b.y0 + b.y1) / 2;
@@ -164,7 +174,8 @@ export function findTicks(fresh: Stroke[], boxes: TaskBox[]): Tick[] {
       const b = bounds([s]);
       const w = b.x1 - b.x0;
       const h = b.y1 - b.y0;
-      if (w > 4 * size || h > 3 * size) return false;
+      // le spunte grandi (la V che sale sopra la riga) vanno bene
+      if (w > 5 * size || h > 4 * size) return false;
       // una linea piatta e lunga che va verso destra: cancellatura, non spunta
       if (h < 0.3 * size && w > 1.5 * size) return false;
       const pts = points([s]);

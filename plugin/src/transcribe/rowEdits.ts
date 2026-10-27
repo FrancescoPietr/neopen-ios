@@ -102,7 +102,14 @@ export function planRowEdits(fresh: Stroke[], strikes: Stroke[], old: Stroke[], 
     const b = bounds(g);
     const c = (b.y0 + b.y1) / 2;
     // segni su una casella che c'è già (spunta, X, casella ripassata): sono spunte, non testo della riga
-    if (boxes.some((x) => b.x0 < x.x1 + 0.4 * H && x.x0 - 0.4 * H < b.x1 && b.y0 < x.y1 + 0.6 * H && x.y0 - 1.2 * H < b.y1 && b.x1 < x.x1 + 2.5 * H)) continue;
+    // (basta che tocchi la casella: la V può salire molto sopra la riga e allungarsi sopra la prima parola)
+    if (
+      boxes.some((x) => {
+        const pad = 0.3 * Math.max(x.x1 - x.x0, x.y1 - x.y0);
+        return b.x0 < x.x1 + pad && x.x0 - pad < b.x1 && b.y0 < x.y1 + pad && x.y0 - pad < b.y1 && b.x0 < x.x1;
+      })
+    )
+      continue;
     // una casella (anche già spuntata) disegnata all'inizio di una riga che non l'aveva: le spunte salgono sopra la
     // riga, quindi basta che stia a sinistra della prima parola, all'altezza della riga
     const start = rows.findIndex((r) => b.x1 <= r.x0 + 0.8 * H && b.x0 >= r.x0 - 4 * H && b.y1 >= r.yc - 0.5 * H && b.y0 <= r.yc + 0.8 * H && b.y1 - b.y0 < 4 * H);

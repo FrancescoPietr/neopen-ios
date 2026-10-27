@@ -45,3 +45,15 @@ test("ticks: the tasks of the page's blocks, in order", () => {
     { text: "12:00 cena", done: false },
   ]);
 });
+
+test("ticks: a box drawn fast (crooked, wider than tall) is still a box at the start of a line; a circle is not", () => {
+  const crooked = stroke([[8.1, 10.1], [9.9, 10.3], [10.0, 11.3], [8.0, 11.4], [8.2, 10.4]]);
+  const circle = stroke(Array.from({ length: 17 }, (_, i) => [8.7 + 0.7 * Math.cos((i / 16) * 2 * Math.PI), 13.7 + 0.7 * Math.sin((i / 16) * 2 * Math.PI)] as [number, number]), 2);
+  const page = [crooked, word(11, 10), circle, word(11, 13)];
+  const boxes = findTaskBoxes(page, page);
+  assert.equal(boxes.length, 1);
+  assert.ok(boxes[0].y0 < 11);
+  // a big V that starts in the box and climbs above the line is a tick
+  const v = stroke([[8.3, 10.6], [8.8, 11.3], [11.5, 8.6]]);
+  assert.deepEqual(findTicks([v], boxes).map((k) => k.index), [0]);
+});

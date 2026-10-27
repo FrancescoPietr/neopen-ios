@@ -1204,15 +1204,35 @@ export class Transcriber {
     }
     // una casella nuova è spuntata solo se sulla carta c'è davvero il segno dentro (Claude a volte la vede spuntata
     // per le spunte delle righe vicine)
+    // Le caselle nuove si guardano sulla carta: una V o una X dentro (o sulla) casella = spuntata, vuota = da fare.
+    // Ogni riga del risultato va con la casella alla sua altezza (dal rettangolo della riga dato da Claude).
     {
       const newBoxes = findTaskBoxes(toDo, visible);
       const boxStrokes = new Set(newBoxes.flatMap((b) => b.strokes));
-      const ticked = findTicks(
+      const marks = findTicks(
         toDo.filter((st) => !boxStrokes.has(st)),
         newBoxes
-      ).length;
-      const claimed = result.lines.filter((l) => l.kind === "task" && l.checked);
-      if (claimed.length && !ticked) {
+      );
+      const tickedBoxes = new Set([...marks.map((k) => k.box), ...newBoxes.filter((b) => b.ticked)]);
+      const H = letterHeight(visible);
+      let fixed = 0;
+      for (const l of result.lines) {
+        if (l.kind !== "task" || !l.box) continue;
+        const lb = boxToNcode(l.box, png);
+        if (!lb) continue;
+        const cy = (lb.minY + lb.maxY) / 2;
+        const box = newBoxes
+          .filter((b) => Math.abs((b.y0 + b.y1) / 2 - cy) <= 1.0 * H && b.x0 < lb.minX + 2 * H)
+          .sort((a, b) => Math.abs((a.y0 + a.y1) / 2 - cy) - Math.abs((b.y0 + b.y1) / 2 - cy))[0];
+        if (!box) continue;
+        const want = tickedBoxes.has(box);
+        if (l.checked !== want) fixed++;
+        l.checked = want;
+      }
+      if (fixed) this.log(`Caselle nuove guardate sulla carta: ${fixed} ${fixed === 1 ? "corretta" : "corrette"} (spuntata o da fare).`);
+      // righe senza rettangolo: spuntate solo se sulla carta c'è almeno un segno in una casella nuova
+      const claimed = result.lines.filter((l) => l.kind === "task" && l.checked && !l.box);
+      if (claimed.length && !tickedBoxes.size) {
         for (const l of claimed) l.checked = false;
         this.log(`${claimed.map((l) => `«${l.text}»`).join(", ")}: nessun segno nella casella sulla carta, da fare.`);
       }
@@ -1572,6 +1592,10 @@ export class Transcriber {
             return !isTask || (!hasTime && !!l.time);
           });
           if (!old) continue;
+          // solo se è la stessa riga sulla carta: "aereo" scritto di nuovo più sotto è un task nuovo
+          const rec = (this.settings().lineRows?.[pid] ?? []).find((r) => r.bid === sg.blockId && words(r.text) === words(old));
+          const lb = l.box ? boxToNcode(l.box, png) : null;
+          if (rec && lb && Math.abs(rec.y - (lb.minY + lb.maxY) / 2) > 0.8 * letterHeight(visible)) continue;
           result.lines.splice(result.lines.indexOf(l), 1);
           upgrades.push({ old, md: linesToMarkdown([l]), seg: sg.blockId });
           this.renameRow(pid, old, linesToMarkdown([l]));

@@ -14,6 +14,7 @@ import { PageKey, Stroke } from "../core/models";
 import { fillTemplate } from "../core/penInbox";
 import { PageStore } from "../core/store";
 import { agenda } from "./agenda";
+import { alerts } from "./alerts";
 import { refreshOutputs } from "./outputs";
 
 interface EnginePage {
@@ -260,17 +261,30 @@ export class PageNotes {
     if (!pages.some((p) => engine.pageNeedsWork(settings, p))) return;
     // the notes as they are now: afterwards the calendar follows what the transcription changed (agenda.followPen)
     await agenda.freshTasks();
+    let noCredit = false;
     const r = await engine.transcribePages(
       {
         io,
         vaultName: vault,
         deviceId: "app-telefono",
-        log: (m) => this.log(m),
+        log: (m) => {
+          if (/credit balance is too low/i.test(m)) noCredit = true;
+          this.log(m);
+        },
         request: backgroundRequest,
         templater: (content, file) => fillTemplate(content, /^\d{4}-\d{2}-\d{2}$/.test(file.basename) ? file.basename : new Date().toLocaleDateString("sv-SE"), file.basename),
       },
       pages
     );
+    // credito di Claude finito: lo dice subito con una notifica e riprova da solo ogni 10 minuti (appena ricarichi
+    // le pagine si trascrivono senza dover riscrivere niente con la penna)
+    if (noCredit) {
+      void alerts.now("credito-claude", "Claude: credito finito", "Le pagine scritte con la penna aspettano: ricarica il credito di Claude e le trascrivo da solo.");
+      this.log("Credito di Claude finito: riprovo tra 10 minuti.");
+      this.wanted = true;
+      this.notBefore = Date.now() + 10 * 60_000;
+      return;
+    }
     if (r.status === "busy") {
       this.log("Note di Obsidian: un altro dispositivo sta trascrivendo, riprovo tra qualche minuto.");
       this.wanted = true;
