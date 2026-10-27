@@ -283,7 +283,7 @@ export class Transcriber {
     const prefix = `${dir}/${pageId(key)}-`;
     const files = (await this.app.vault.adapter.list(dir)).files.filter((f) => f.startsWith(prefix) && f.endsWith(".svg"));
     if (!files.length) return [];
-    const notes = [...new Set(this.router.segmentsOf(key).map((sg) => sg.file))];
+    const notes = [...new Set(this.router.partsOf(key).map((sg) => sg.file))];
     const contents = await Promise.all(notes.map(async (f) => ({ f, c: await this.app.vault.read(f) })));
     const byT = new Map(strokes.map((st) => [st.t, st]));
     const out: { svgPath: string; note: TFile; rec: DrawingRecord; strokes: Stroke[] }[] = [];
@@ -563,11 +563,51 @@ export class Transcriber {
     }
   }
 
-  /** Task scritti in un giorno diverso da quello della nota del giorno in cui finiscono: prendono il giorno in cui li hai scritti. */
-  private dateForToday(lines: TranscribedLine[], noteBase: string, today: string): void {
-    const day = /^(\d{4}-\d{2}-\d{2})$/.exec(noteBase)?.[1];
-    if (!day || day === today) return;
-    for (const l of lines) if (l.kind === "task" && !l.due) l.due = today;
+  /**
+   * Quando hai scritto ogni riga: l'ora (della penna) dei tratti nuovi dentro il rettangolo della riga. Una pagina
+   * scaricata dopo giorni ha insieme le righe di ieri sera e quelle di stamattina. Una riga senza rettangolo prende
+   * l'ora della riga prima.
+   */
+  private lineTimes(lines: TranscribedLine[], toDo: Stroke[], png: { ox: number; oy: number; scale: number }, fallback: number): Map<TranscribedLine, number> {
+    const times = timesOfLines(lines.map((l) => (l.box ? boxToNcode(l.box, png) : null)), toDo, fallback);
+    return new Map(lines.map((l, i) => [l, times[i]]));
+  }
+
+  /**
+   * Le righe nuove di una parte della pagina che sta nella nota di un giorno: quelle scritte in un altro giorno vanno
+   * nella nota di quel giorno (`others`), le altre restano (`stay`). La prima riga che continua la frase della riga di
+   * prima (non un task nuovo) resta attaccata a quella.
+   */
+  private async splitByDay(
+    key: PageKey,
+    seg: RoutedNote,
+    lines: TranscribedLine[],
+    lineAt: Map<TranscribedLine, number>,
+    fallback: number,
+    continues: boolean
+  ): Promise<{ stay: TranscribedLine[]; others: { seg: RoutedNote; lines: TranscribedLine[] }[] }> {
+    const others: { seg: RoutedNote; lines: TranscribedLine[] }[] = [];
+    if (seg.kind !== "daily") return { stay: lines, others };
+    const byDay = new Map<string, { at: number; lines: TranscribedLine[] }>();
+    lines.forEach((l, i) => {
+      const at = lineAt.get(l) ?? fallback;
+      const day = (i === 0 && continues && l.kind !== "task") || !Number.isFinite(at) ? "" : new Date(at).toLocaleDateString("sv-SE");
+      const g = byDay.get(day) ?? { at, lines: [] };
+      g.lines.push(l);
+      byDay.set(day, g);
+    });
+    const stay = new Set<TranscribedLine>();
+    for (const [day, g] of byDay) {
+      const content = g.lines.some((l) => l.kind !== "newnote" && l.text.trim());
+      const to = day && content ? await this.router.daySegment(key, seg, g.at) : null;
+      if (!to || to.blockId === seg.blockId) g.lines.forEach((l) => stay.add(l));
+      else {
+        const prev = others.find((o) => o.seg.blockId === to.blockId);
+        if (prev) prev.lines.push(...g.lines);
+        else others.push({ seg: to, lines: g.lines });
+      }
+    }
+    return { stay: lines.filter((l) => stay.has(l)), others };
   }
 
   /** Dove sta sulla carta ogni riga appena scritta nella nota (dai rettangoli delle righe dati da Claude). */
@@ -623,7 +663,7 @@ export class Transcriber {
     if (!edits.length) return handled;
     // le righe della nota per questa pagina (testo, task, titoli: non i blocchi dei disegni)
     const lines: { text: string; seg: RoutedNote }[] = [];
-    for (const sg of this.router.segmentsOf(key)) {
+    for (const sg of this.router.partsOf(key)) {
       let fence = false;
       for (const l of readBlock(await this.app.vault.read(sg.file), sg.blockId).split("\n")) {
         const t = l.trim();
@@ -891,7 +931,7 @@ export class Transcriber {
     let previousText = "";
     if (hasContext && routed) {
       const parts: string[] = [];
-      for (const sg of this.router.segmentsOf(key)) parts.push(readBlock(await this.app.vault.read(sg.file), sg.blockId));
+      for (const sg of this.router.partsOf(key)) parts.push(readBlock(await this.app.vault.read(sg.file), sg.blockId));
       previousText = parts.filter(Boolean).join("\n").split("\n").slice(-30).join("\n");
     }
     // Pagina di continuazione ancora vuota: diamo a Claude la fine della pagina precedente,
@@ -1089,7 +1129,7 @@ export class Transcriber {
     // la spunta non si perde anche se nella pagina intera Claude non l'ha vista
     if (ticks.length && pageBounds) {
       const open: string[] = [];
-      for (const sg of this.router.segmentsOf(key))
+      for (const sg of this.router.partsOf(key))
         for (const t of taskLines([readBlock(await this.app.vault.read(sg.file), sg.blockId)])) if (!t.done && !open.includes(t.text)) open.push(t.text);
       const near = (a: string, b: string) => {
         const x = looseText(a);
@@ -1192,23 +1232,32 @@ export class Transcriber {
       result.corrections = result.corrections.map((c) => ({ ...c, new_line: fix(c.new_line) }));
     }
 
-    // "oggi" / "domani" / "dopodomani" in un task senza data: la data si calcola qui (se il modello l'ha dimenticata)
+    // quando hai scritto ogni riga (l'ora della penna): "domani", l'orario già passato e la nota del giorno si
+    // contano dal giorno di quella riga, non dal primo tratto scaricato
+    const lineAt = this.lineTimes(result.lines, toDo, png, Number.isFinite(writtenAt) ? writtenAt : Date.now());
+    const dayOfLine = (l: TranscribedLine) => new Date(lineAt.get(l) ?? writtenAt).toLocaleDateString("sv-SE");
+
+    // "oggi" / "domani" / "dopodomani" in un task: la data si calcola qui dal giorno in cui hai scritto la riga
+    // (se il modello l'ha dimenticata, o l'ha contata da un altro giorno)
     for (const l of result.lines) {
-      if (l.kind !== "task" || l.due) continue;
+      if (l.kind !== "task") continue;
       const m = /\b(dopodomani|domani|oggi)\b/i.exec(l.text);
       if (!m) continue;
       const add = { oggi: 0, domani: 1, dopodomani: 2 }[m[1].toLowerCase() as "oggi" | "domani" | "dopodomani"];
-      const d = new Date(`${today}T12:00:00`);
+      const fromToday = new Date(`${today}T12:00:00`);
+      fromToday.setDate(fromToday.getDate() + add);
+      if (l.due && l.due !== fromToday.toLocaleDateString("sv-SE")) continue; // una data scritta sulla carta
+      const d = new Date(`${dayOfLine(l)}T12:00:00`);
       d.setDate(d.getDate() + add);
       l.due = d.toLocaleDateString("sv-SE");
     }
 
     // "aereo alle 13:00" scritto alle 22:40 senza un giorno: è domani (un orario già passato oggi non è un impegno)
     if (Number.isFinite(writtenAt)) {
-      const w = new Date(writtenAt);
-      const nowMin = w.getHours() * 60 + w.getMinutes();
       for (const l of result.lines) {
         if (l.kind !== "task" || l.due || !l.time) continue;
+        const w = new Date(lineAt.get(l) ?? writtenAt);
+        const nowMin = w.getHours() * 60 + w.getMinutes();
         const [h, m] = l.time.split(":").map(Number);
         if (h * 60 + m + 15 >= nowMin) continue;
         const d = new Date(w.getFullYear(), w.getMonth(), w.getDate() + 1, 12);
@@ -1475,6 +1524,13 @@ export class Transcriber {
         const copy = await this.router.backup(f, "prima di ritrascrivere");
         this.log(`Copia di sicurezza di "${f.basename}" in "${copy}".`);
       }
+      // le righe finite nelle note di altri giorni tornano tutte nella pagina
+      const extra = this.router.partsOf(key).filter((p) => !segs.some((sg) => sg.blockId === p.blockId));
+      for (const f of new Set(extra.map((p) => p.file))) {
+        const copy = await this.router.backup(f, "prima di ritrascrivere");
+        this.log(`Copia di sicurezza di "${f.basename}" in "${copy}".`);
+      }
+      await this.router.dropDaySegments(key);
     }
     const first = segs[0];
     // testo nuovo: nella parte della pagina in cui è scritto sulla carta (sopra un titolo a metà pagina = la parte
@@ -1540,7 +1596,7 @@ export class Transcriber {
           const m = bare.exec(d.trim());
           if (!m) continue;
           const hm = `${m[1].padStart(2, "0")}:${m[2]}`;
-          for (const sg of this.router.segmentsOf(key)) {
+          for (const sg of this.router.partsOf(key)) {
             const line = readBlock(await this.app.vault.read(sg.file), sg.blockId)
               .split("\n")
               .find((l) => new RegExp(`^\\s*- \\[[ xX]\\] ${hm}\\s`).test(l));
@@ -1554,7 +1610,7 @@ export class Transcriber {
         const taskWords = (l: string) =>
           looseText(l.replace(/^\s*(?:-\s*)?\[[ xX]\]\s*/, "").replace(/^\d{1,2}[:.]\d{2}(?:\s*-\s*\d{1,2}[:.]\d{2})?\s+/, "").replace(/\s*📅.*$/, ""));
         const noteLines: string[] = [];
-        for (const sg of this.router.segmentsOf(key)) noteLines.push(...readBlock(await this.app.vault.read(sg.file), sg.blockId).split("\n"));
+        for (const sg of this.router.partsOf(key)) noteLines.push(...readBlock(await this.app.vault.read(sg.file), sg.blockId).split("\n"));
         for (const d of [...result.deleted_text]) {
           const w = taskWords(d);
           if (!w) continue;
@@ -1594,7 +1650,7 @@ export class Transcriber {
             .replace(/\s*📅.*$/, "")
             .replace(/\s*(?:alle|ore|dalle)\s*\d{1,2}(?:[:.]\d{2})?\s*$/i, "")
         );
-      for (const sg of segs) {
+      for (const sg of this.router.partsOf(key)) {
         const have = readBlock(await this.app.vault.read(sg.file), sg.blockId).split("\n");
         for (const l of [...result.lines]) {
           if (l.kind !== "task") continue;
@@ -1620,9 +1676,17 @@ export class Transcriber {
     }
     // 1) testo nuovo nella sua parte della pagina. Una riga identica a una già presente in quel blocco è una rilettura
     //    del testo grigio (Claude l'ha riscritta): non si duplica.
+    // La pagina scrive nella nota del giorno in cui è cominciata ("2026-10-26"), ma queste righe le hai scritte in un
+    // giorno dopo (l'ora dei tratti della penna): vanno nella nota di quel giorno, non in quella vecchia. Un task con
+    // una data scritta sulla carta ("domani", "il 3") tiene la sua data (📅).
     if (!force && result.lines.length) {
+      // (anche i blocchi della pagina nelle note degli altri giorni: lì ci sono le righe scritte dopo)
+      const blocks: string[] = [];
+      for (const sg of [target, ...this.router.partsOf(key).filter((p) => !segs.some((x) => x.blockId === p.blockId))])
+        blocks.push(readBlock(await this.app.vault.read(sg.file), sg.blockId));
       const have = new Set(
-        readBlock(await this.app.vault.read(target.file), target.blockId)
+        blocks
+          .join("\n")
           .split("\n")
           .map((l) => {
             // con l'orario: "lavoro" scritto di nuovo su una riga nuova non è "23:00 lavoro" riletto
@@ -1647,7 +1711,19 @@ export class Transcriber {
     if (!force) await adoptPhoneTasks(this.app, [...result.lines, ...groups.slice(1).flatMap((g) => g.lines)], (m) => this.log(`Pagina ${key.page}: ${m}`));
     // la pagina scrive nella nota del giorno in cui è cominciata ("2026-10-26"), ma queste righe le hai scritte oggi:
     // senza un giorno sulla carta, sono di oggi (un appuntamento "alle 9:00" scritto stanotte è di oggi, non di ieri)
-    if (target.kind === "daily") this.dateForToday(result.lines, target.file.basename, today);
+    // Ogni riga va nella nota del giorno in cui l'hai scritta: le righe di oggi su una pagina cominciata ieri non
+    // finiscono nella nota di ieri (vale anche se la nota è vecchia). Un task con una data scritta sulla carta tiene
+    // la sua data (📅): la nota è solo dove sta.
+    /** Righe scritte in un altro giorno, con la nota di quel giorno. */
+    let otherDays: { seg: RoutedNote; lines: TranscribedLine[] }[] = [];
+    if (!force && target.kind === "daily" && result.lines.length) {
+      const split = await this.splitByDay(key, target, result.lines, lineAt, writtenAt, result.continues_last_line);
+      otherDays = split.others;
+      if (otherDays.length) {
+        if (split.stay[0] !== result.lines[0]) result.continues_last_line = false;
+        result.lines = split.stay;
+      }
+    }
     const md = linesToMarkdown(result.lines);
     this.recordRows(pid, target.blockId, result.lines, png);
     /** Cosa è stato scritto in quale nota (per mettere i #tag nella nota giusta). */
@@ -1665,6 +1741,12 @@ export class Transcriber {
         return next;
       });
     }
+    for (const o of otherDays) {
+      const omd = linesToMarkdown(o.lines);
+      this.recordRows(pid, o.seg.blockId, o.lines, png);
+      if (omd) await this.app.vault.process(o.seg.file, (c) => writeIntoBlock(c, omd, "append", false, o.seg.blockId));
+      written.push({ file: o.seg.file, md: omd, daily: true });
+    }
 
     // 2) cancellature, correzioni e spunte: in tutte le parti della pagina
     let checked = 0;
@@ -1676,7 +1758,7 @@ export class Transcriber {
       // "[ ] 13:20 aereo", "- [x] pane": la casella copiata da Claude non fa parte del testo del task
       let toCheck = result.checked_tasks.map((t) => t.replace(/^\s*(?:-\s*)?\[[ xX✓✔]?\]\s*/, "").trim()).filter(Boolean);
       for (const fuzzy of [false, true]) {
-        for (const sg of segs) {
+        for (const sg of this.router.partsOf(key)) {
           if (!toCheck.length && (fuzzy || (!result.deleted_text.length && !pendingFix.length && !upgrades.length))) break;
           await this.app.vault.process(sg.file, (content) => {
             let next = content;
@@ -1747,7 +1829,6 @@ export class Transcriber {
     const usedSegs = new Set<string>();
     for (let k = 1; k < groups.length; k++) {
       const g = groups[k];
-      const gLines = g.lines;
       let seg: RoutedNote;
       // ritrascrivi da capo: si riusa la nota già creata per lo stesso titolo (non "la k-esima": se un titolo
       // manca o è letto diverso, le altre note non si scambiano il testo)
@@ -1761,7 +1842,18 @@ export class Transcriber {
       }
       after = seg.blockId;
       usedSegs.add(seg.blockId);
-      if (seg.kind === "daily") this.dateForToday(gLines, seg.file.basename, today);
+      // righe sotto il titolo scritte in un altro giorno: nella nota di quel giorno
+      let gLines = g.lines;
+      if (!force && seg.kind === "daily") {
+        const split = await this.splitByDay(key, seg, gLines, lineAt, gCreated, false);
+        gLines = split.stay;
+        for (const o of split.others) {
+          const omd = linesToMarkdown(o.lines);
+          this.recordRows(pid, o.seg.blockId, o.lines, png);
+          if (omd) await this.app.vault.process(o.seg.file, (c) => writeIntoBlock(c, omd, "append", false, o.seg.blockId));
+          written.push({ file: o.seg.file, md: omd, daily: true });
+        }
+      }
       let gmd = linesToMarkdown(gLines);
       this.recordRows(pid, seg.blockId, gLines, png);
       // parte mandata nella nota del giorno (#task accanto al titolo): la nota resta col nome della data,
@@ -1795,7 +1887,7 @@ export class Transcriber {
     // 4b) risposte con la freccia: sotto la riga da cui parte la freccia (sotto-punto "↳", non un task)
     if (result.replies.length) {
       const pending = [...result.replies];
-      const parts = this.router.segmentsOf(key);
+      const parts = this.router.partsOf(key);
       for (const fuzzy of [false, true]) {
         for (const sg of parts) {
           if (!pending.length) break;
@@ -2075,4 +2167,29 @@ export function stripTags<T extends { text: string }>(lines: T[], tags: Set<stri
 export function inlineTags(md: string): string[] {
   const clean = md.replace(/```[\s\S]*?```/g, " ").replace(/!?\[\[[^\]]*\]\]/g, " ").replace(/`[^`]*`/g, " ");
   return [...new Set([...clean.matchAll(/(?:^|[\s(])#([\p{L}][\p{L}\p{N}_\-/]*)/gu)].map((m) => m[1].toLowerCase()))];
+}
+
+/**
+ * L'ora in cui hai scritto ogni riga (rettangoli in unità Ncode, null se manca): la mediana dei tratti nuovi dentro il
+ * rettangolo; una riga senza rettangolo (o senza tratti) prende l'ora della riga prima.
+ */
+export function timesOfLines(boxes: ({ minX: number; minY: number; maxX: number; maxY: number } | null)[], strokes: Stroke[], fallback: number): number[] {
+  const ink = strokes
+    .filter((st) => st.tip !== 1 && st.pts.length >= 3 && st.t > 1_000_000_000_000)
+    .map((st) => {
+      const b = strokeBounds([st])!;
+      return { t: st.t, x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 };
+    });
+  let prev = fallback;
+  return boxes.map((b) => {
+    if (b) {
+      const pad = 0.4;
+      const ts = ink
+        .filter((p) => p.x >= b.minX - pad && p.x <= b.maxX + pad && p.y >= b.minY - pad && p.y <= b.maxY + pad)
+        .map((p) => p.t)
+        .sort((a, c) => a - c);
+      if (ts.length) prev = ts[Math.floor(ts.length / 2)];
+    }
+    return prev;
+  });
 }

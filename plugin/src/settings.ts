@@ -131,6 +131,11 @@ export interface NeoPenSettings {
    * cambia proprio quella riga della nota.
    */
   lineRows?: Record<string, { bid: string; text: string; y: number; x0: number; x1: number }[]>;
+  /**
+   * id pagina → parti della pagina nella nota di un altro giorno: righe scritte in un giorno successivo su una pagina
+   * cominciata prima vanno nella nota del giorno in cui le hai scritte (`of` = la parte della pagina da cui vengono).
+   */
+  daySegments?: Record<string, { bid: string; of: string }[]>;
   /** id pagina → id della pagina di cui è la continuazione (freccia → numero). */
   continuations: Record<string, string>;
   /** id pagina → quanti tratti aveva nella penna e fin dove è trascritta (i tratti stanno nella penna). */

@@ -491,6 +491,67 @@ export class NoteRouter {
     return out;
   }
 
+  /**
+   * Tutte le parti della pagina, anche quelle nelle note di altri giorni (righe scritte in un giorno successivo):
+   * per cercare le righe da spuntare, correggere o cancellare.
+   */
+  partsOf(key: PageKey): RoutedNote[] {
+    const out = this.segmentsOf(key);
+    for (const d of this.settings().daySegments?.[pageId(key)] ?? []) {
+      const ref = this.settings().pageNotes[d.bid];
+      const f = ref ? this.app.vault.getAbstractFileByPath(ref.path) : null;
+      if (f instanceof TFile && !out.some((o) => o.blockId === d.bid)) out.push({ file: f, blockId: d.bid, kind: "daily" });
+    }
+    return out;
+  }
+
+  /**
+   * La parte `of` della pagina sta nella nota di un giorno passato, ma le righe nuove le hai scritte il giorno
+   * `created`: vanno nella nota di quel giorno, in un blocco della pagina tutto loro (lo stesso per tutto il giorno).
+   * Con `create` falso restituisce solo un blocco già esistente (o null).
+   */
+  async daySegment(key: PageKey, of: RoutedNote, created: number, create = true): Promise<RoutedNote | null> {
+    if (of.kind !== "daily") return of;
+    const want = moment(created).format(this.dailyConfig().format);
+    if (of.file.basename === want) return of;
+    const s = this.settings();
+    const id = pageId(key);
+    const list = (s.daySegments = s.daySegments ?? {})[id] ?? [];
+    for (const d of list) {
+      if (d.of !== of.blockId) continue;
+      const ref = s.pageNotes[d.bid];
+      const f = ref ? this.app.vault.getAbstractFileByPath(ref.path) : null;
+      if (f instanceof TFile && f.basename === want && hasBlock(await this.app.vault.read(f), d.bid)) return { file: f, blockId: d.bid, kind: "daily" };
+    }
+    if (!create) return null;
+    const used = [...(s.segments?.[id] ?? [id]), ...list.map((d) => d.bid)];
+    const n = Math.max(1, ...used.map((b) => Number(b.split("~")[1] ?? 1)).filter(Number.isFinite)) + 1;
+    const bid = `${id}~${n}`;
+    const ref = s.pageNotes[of.blockId];
+    const rule = { ...(this.ruleFor("task") ?? ({} as TagRule)), drawing: false, calendar: ref?.calendar ?? true } as TagRule;
+    const routed = await this.ensureDaily(key, { pageTag: "", title: "", created }, rule, bid);
+    s.daySegments[id] = [...list, { bid, of: of.blockId }];
+    await this.save();
+    this.log(`Pagina ${key.page}: la pagina è del ${of.file.basename}, ma queste righe le hai scritte il ${want}: vanno nella nota "${routed.file.basename}".`);
+    return routed;
+  }
+
+  /** Ritrascrivi da capo: le righe tornano nella pagina, i blocchi negli altri giorni si tolgono. */
+  async dropDaySegments(key: PageKey): Promise<void> {
+    const s = this.settings();
+    const id = pageId(key);
+    for (const d of s.daySegments?.[id] ?? []) {
+      const ref = s.pageNotes[d.bid];
+      const f = ref ? this.app.vault.getAbstractFileByPath(ref.path) : null;
+      if (f instanceof TFile) await this.app.vault.process(f, (c) => removeBlock(c, d.bid));
+      delete s.pageNotes[d.bid];
+    }
+    if (s.daySegments?.[id]) {
+      delete s.daySegments[id];
+      await this.save();
+    }
+  }
+
   /** La parte in fondo alla pagina: lì va il testo nuovo. */
   lastSegment(key: PageKey): RoutedNote | null {
     const all = this.segmentsOf(key);
@@ -503,7 +564,9 @@ export class NoteRouter {
     const id = pageId(key);
     s.segments = s.segments ?? {};
     const list = s.segments[id] ?? [id];
-    const n = Math.max(1, ...list.map((b) => Number(b.split("~")[1] ?? 1))) + 1;
+    // (anche i blocchi della pagina nelle note di altri giorni: l'id non si ripete)
+    const taken = [...list, ...(s.daySegments?.[id] ?? []).map((d) => d.bid)];
+    const n = Math.max(1, ...taken.map((b) => Number(b.split("~")[1] ?? 1)).filter(Number.isFinite)) + 1;
     const bid = `${id}~${n}`;
     const rule = this.ruleFor(info.pageTag);
     const routed = rule?.action === "daily" ? await this.ensureDaily(key, info, rule, bid) : await this.ensureNote(key, info, rule, bid);

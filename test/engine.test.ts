@@ -196,7 +196,7 @@ test("engine: lines written today into yesterday's daily note (the page started 
   const log: string[] = [];
   const opts = {
     ...options(io, {}, { n: 0 }, log),
-    request: async () => ({ status: 200, text: JSON.stringify({ content: [{ type: "text", text: JSON.stringify(answers[Math.min(n++, 1)]) }], usage: { input_tokens: 1, output_tokens: 1 } }) }),
+    request: async () => ({ status: 200, text: JSON.stringify({ content: [{ type: "text", text: JSON.stringify(answers[Math.min(n++, answers.length - 1)]) }], usage: { input_tokens: 1, output_tokens: 1 } }) }),
   };
   const first = [word(at(26, 23, 16), 10, 0), word(at(26, 23, 16) + 1000, 19, 0)];
   assert.equal((await transcribePages(opts, [{ key: key(25), strokes: first }])).status, "ok", log.join("\n"));
@@ -204,6 +204,30 @@ test("engine: lines written today into yesterday's daily note (the page started 
   assert.equal((await transcribePages(opts, [{ key: key(25), strokes: more }])).status, "ok", log.join("\n"));
   const daily = io.read("Daily/2026-10-26.md")!;
   assert.match(daily, /- \[ \] dormire\n/, daily);
-  assert.match(daily, /- \[ \] 09:00 viaggiare 📅 2026-10-27/, daily);
-  assert.match(daily, /- \[ \] esportare 📅 2026-10-27/, daily);
+  assert.doesNotMatch(daily, /viaggiare|esportare/, daily);
+  // scritte il 27: nella nota del 27, senza data (sono di quel giorno)
+  const today = io.read("Daily/2026-10-27.md")!;
+  assert.match(today, /- \[ \] 09:00 viaggiare\n/, today);
+  assert.match(today, /- \[ \] esportare\n/, today);
+  // altre righe lo stesso giorno: nello stesso blocco della nota del 27, non in uno nuovo
+  answers.push(answer(["[ ] cucinare"]));
+  n = 2;
+  const third = [...more, word(at(27, 8, 5), 10, 4), word(at(27, 8, 5) + 1000, 19, 4)];
+  assert.equal((await transcribePages(opts, [{ key: key(25), strokes: third }])).status, "ok", log.join("\n"));
+  const again = io.read("Daily/2026-10-27.md")!;
+  assert.match(again, /- \[ \] esportare\n- \[ \] cucinare/, again);
+  assert.equal(again.match(/<!-- neopen:testo:/g)?.length, 1, again);
+  assert.doesNotMatch(io.read("Daily/2026-10-26.md")!, /cucinare/);
+  const s = JSON.parse(io.read(".obsidian/plugins/neo-pen/data.json")!);
+  assert.equal(s.daySegments["3_27_746_25"].length, 1);
+});
+
+test("engine: each line's writing time comes from the pen strokes inside it", async () => {
+  const { timesOfLines } = await import("../plugin/src/transcribe/Transcriber");
+  const strokes = [word(at(26, 23), 10, 0), word(at(26, 23) + 1000, 19, 0), word(at(27, 8), 10, 2), word(at(27, 8) + 1000, 19, 2)];
+  const box = (row: number) => ({ minX: 9, minY: 19 + row * 6, maxX: 27, maxY: 23 + row * 6 });
+  const t = timesOfLines([box(0), null, box(2)], strokes, 0);
+  assert.equal(new Date(t[0]).getDate(), 26);
+  assert.equal(new Date(t[1]).getDate(), 26, "no box: the line before");
+  assert.equal(new Date(t[2]).getDate(), 27);
 });

@@ -394,7 +394,7 @@ export default class NeoPenPlugin extends Plugin {
         for (const id of new Set(ids)) {
           const [section, owner, note, page] = id.split("_").map(Number);
           const key = { section, owner, note, page };
-          const seg = this.router.segmentsOf(key).find((n) => n.file.path === f.path);
+          const seg = this.router.partsOf(key).find((n) => n.file.path === f.path);
           if (seg) {
             const ref = this.settings.pageNotes[seg.blockId];
             if (ref) ref.drawing = true;
