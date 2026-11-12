@@ -40,10 +40,11 @@ export function takePhoneLines(content: string, tasks: TranscribedLine[]): { con
  * Prima di scrivere i task di una trascrizione: le righe che il telefono aveva già messo per gli stessi task
  * (nelle note del giorno degli ultimi 30 giorni o in qualunque nota con un blocco ^penna-) si tolgono.
  */
-export async function adoptPhoneTasks(app: App, lines: TranscribedLine[], log: (m: string) => void): Promise<void> {
+export async function adoptPhoneTasks(app: App, lines: TranscribedLine[], log: (m: string) => void, writtenAt = Date.now()): Promise<void> {
   const tasks = lines.filter((l) => l.kind === "task" && l.text.trim());
   if (!tasks.length) return;
-  const since = Date.now() - 2 * 86_400_000;
+  // (dal giorno in cui hai scritto la pagina: scaricata giorni dopo, le righe del telefono di quei giorni contano)
+  const since = Math.min(Date.now(), Number.isFinite(writtenAt) ? writtenAt : Date.now()) - 2 * 86_400_000;
   const files = app.vault.getMarkdownFiles().filter((f) => {
     const blocks = app.metadataCache.getFileCache(f)?.blocks;
     // le note del giorno di oggi e di ieri (o cambiate da poco), non lo storico

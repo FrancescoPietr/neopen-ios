@@ -39,7 +39,7 @@ export interface TranscriberSettings {
   /** Lingua delle frasi di riferimento ("auto" = quella di Obsidian). */
   handwritingLang?: string;
   /** Dove sta sulla carta ogni riga trascritta (lo stesso oggetto delle impostazioni del plugin: si salva con loro). */
-  lineRows?: Record<string, { bid: string; text: string; y: number; x0: number; x1: number; inferred?: boolean }[]>;
+  lineRows?: Record<string, { bid: string; text: string; y: number; x0: number; x1: number; inferred?: boolean; at?: number }[]>;
 }
 
 /** Al massimo tanti campioni della calligrafia per chiamata (ognuno è un'immagine in più, anche se in cache). */
@@ -622,8 +622,66 @@ export class Transcriber {
       if (!b || !text || text.startsWith("```")) continue;
       const y = (b.minY + b.maxY) / 2;
       for (let i = list.length - 1; i >= 0; i--) if (Math.abs(list[i].y - y) < 0.5 && list[i].x0 < b.maxX && b.minX < list[i].x1) list.splice(i, 1);
-      list.push({ bid, text, y, x0: b.minX, x1: b.maxX, ...(l.inferredDue ? { inferred: true } : {}) });
+      list.push({ bid, text, y, x0: b.minX, x1: b.maxX, at: Date.now(), ...(l.inferredDue ? { inferred: true } : {}) });
     }
+  }
+
+  /**
+   * Stai ancora scrivendo la stessa pagina: le righe trascritte pochi minuti fa (mentre ti eri fermato a pensare, a
+   * metà di una parola o di un titolo) si rileggono da capo insieme alla scrittura nuova, invece di rattoppare la
+   * nota pezzo per pezzo ("Pensie" + "ri 2", "Oggi abbiamo" + "girato un'intervista"). Le righe tolgono dalla nota e
+   * i loro tratti tornano da trascrivere. Restituisce i tratti riaperti.
+   */
+  private async reopenTail(key: PageKey, strokes: Stroke[], toDo: Stroke[]): Promise<Stroke[]> {
+    const pid = pageId(key);
+    const list = this.settings().lineRows?.[pid];
+    if (!list?.length || !toDo.length) return [];
+    const now = Date.now();
+    const WINDOW = 15 * 60_000;
+    const recent = list.filter((r) => r.at && now - r.at <= WINDOW);
+    if (!recent.length) return [];
+    // scrittura di seguito: il primo tratto nuovo non molto dopo l'ultimo già trascritto (ore della penna)
+    const firstNew = Math.min(...toDo.map((st) => st.t));
+    const old = strokes.filter((st) => st.tx && st.tip !== 1 && st.pts.length >= 3);
+    const lastOld = Math.max(...old.map((st) => st.t));
+    if (!Number.isFinite(lastOld) || firstNew - lastOld > WINDOW) return [];
+    const H = letterHeight(strokes.filter((st) => st.tip !== 1 && st.pts.length >= 3));
+    // solo le righe dove stai scrivendo: quella della scrittura nuova e le due sopra (non tutta la pagina, non il
+    // titolo in cima)
+    const newTop = Math.min(...toDo.map((st) => strokeBounds([st])!.minY));
+    const near = recent.filter((r) => r.y >= newTop - 4 * H);
+    // una riga cambiata nella nota nel frattempo (spuntata nell'app, corretta a mano) resta com'è
+    const parts = this.router.partsOf(key);
+    const untouched: typeof near = [];
+    for (const r of near) {
+      const seg = parts.find((p) => p.blockId === r.bid);
+      if (!seg) continue;
+      const lines = readBlock(await this.app.vault.read(seg.file), seg.blockId).split("\n").map((l) => l.trim());
+      if (lines.includes(r.text.trim())) untouched.push(r);
+    }
+    recent.splice(0, recent.length, ...untouched);
+    if (!recent.length) return [];
+    // i tratti delle righe recenti (scritti da poco anche secondo la penna)
+    const reopened = old.filter((st) => {
+      if (firstNew - st.t > WINDOW + 5 * 60_000) return false;
+      const b = strokeBounds([st])!;
+      const cx = (b.minX + b.maxX) / 2;
+      const cy = (b.minY + b.maxY) / 2;
+      // (anche oltre la fine registrata della riga: la parola che stavi finendo)
+      return recent.some((r) => Math.abs(cy - r.y) <= 0.9 * H && cx >= r.x0 - 1);
+    });
+    if (!reopened.length) return [];
+    // le righe recenti escono dalla nota (ci rientrano rilette, intere)
+    for (const r of recent) {
+      const seg = parts.find((p) => p.blockId === r.bid);
+      if (!seg) continue;
+      const text = r.text.replace(/^\s*(- \[[ xX]\] |#{1,6} |- )/, "");
+      await this.app.vault.process(seg.file, (c) => removeLineInBlock(c, text, seg.blockId));
+    }
+    this.settings().lineRows![pid] = list.filter((r) => !recent.includes(r));
+    for (const st of reopened) delete st.tx;
+    this.log(`Pagina ${key.page}: stai ancora scrivendo qui, rileggo da capo ${recent.length === 1 ? "l'ultima riga" : `le ultime ${recent.length} righe`} insieme alla scrittura nuova.`);
+    return reopened;
   }
 
   /** Una riga della nota cambiata (o tolta, `to` vuoto): si aggiorna anche la sua posizione sulla carta. */
@@ -843,6 +901,16 @@ export class Transcriber {
       this.log(`Pagina ${key.page} (#alfabeto): campione della calligrafia aggiornato.`);
       return;
     }
+    // stai ancora scrivendo la stessa pagina: le ultime righe (trascritte pochi minuti fa) si rileggono da capo
+    let rereading = false;
+    if (mode === "new") {
+      const reopened = await this.reopenTail(key, page.strokes, toDo);
+      rereading = reopened.length > 0;
+      if (reopened.length) {
+        toDo = page.strokes.filter((st) => !st.tx && st.tip !== 1 && st.pts.length >= 3);
+        newSet = new Set(toDo.map((st) => st.t));
+      }
+    }
     const hasContext = page.strokes.some((st) => st.tx && st.tip !== 1);
 
     // disegni già nella nota: i tratti nuovi attaccati a un disegno lo completano (senza passare da Claude)
@@ -863,7 +931,8 @@ export class Transcriber {
 
     // righe già scritte cambiate sulla carta (parole aggiunte sulla stessa riga, correzioni accanto a una cancellatura,
     // orari cancellati, caselle disegnate davanti): ognuna si rilegge da sola e si aggiorna nella nota
-    if (hasContext && mode === "new") {
+    // (non quando si rilegge da capo la coda della pagina: lì la scrittura nuova continua righe appena tolte)
+    if (hasContext && mode === "new" && !rereading) {
       const handled = await this.editRows(key, page.strokes, toDo);
       if (handled.size) {
         await this.store.markTranscribed(key, [...handled].map((st) => st.t));
@@ -1141,6 +1210,76 @@ export class Transcriber {
         result.lines.unshift({ kind: "newnote", text: result.page_title, checked: false, due: "", time: "", tag: result.page_tag || undefined });
         result.page_tag = "";
         result.page_title = "";
+      }
+    }
+
+    // Tratti nuovi che la risposta non ha messo da nessuna parte (né in una riga, né in un disegno): una fila di stelle,
+    // uno schizzo che Claude non ha visto come disegno. Se sono un bel gruppo diventano un disegno, così non si perdono.
+    // una riga di soli simboli (★★★, ♥, →) disegnata con forme grandi: è un disegno, non testo
+    {
+      const Hs = letterHeight(visible);
+      for (let i = result.lines.length - 1; i >= 0; i--) {
+        const l = result.lines[i];
+        if (!l.box || !l.text.trim() || /[\p{L}\p{N}]/u.test(l.text) || /^\[\[/.test(l.text.trim())) continue;
+        const b = boxToNcode(l.box, png);
+        if (!b) continue;
+        const inside = toDo.filter((st) => {
+          const sb = strokeBounds([st]);
+          if (!sb) return false;
+          const cx = (sb.minX + sb.maxX) / 2;
+          const cy = (sb.minY + sb.maxY) / 2;
+          return cx >= b.minX - 0.5 && cx <= b.maxX + 0.5 && cy >= b.minY - 0.5 && cy <= b.maxY + 0.5 && Math.min(sb.maxX - sb.minX, sb.maxY - sb.minY) >= 1.4 * Hs;
+        });
+        if (inside.length < 2) continue;
+        result.drawings.push({ box: l.box, labels: [], text_side: "none", lines_beside: 0 } as never);
+        result.lines[i] = { kind: "text", text: `[[drawing ${result.drawings.length}]]`, checked: false, due: "", time: "" };
+        this.log(`«${l.text.trim()}»: sono forme disegnate, le metto come disegno.`);
+      }
+    }
+    // (solo se ogni riga ha il suo rettangolo: senza, ogni parola sembrerebbe persa)
+    if (!result.replies.length && result.lines.every((l) => !l.text.trim() || l.kind === "newnote" || !!l.box)) {
+      const boxes = [
+        ...result.lines.filter((l) => l.box).map((l) => boxToNcode(l.box!, png)),
+        ...result.drawings.map((d) => boxToNcode(d.box, png)),
+        ...result.drawings.flatMap((d) => d.labels.map((lb) => boxToNcode(lb.box, png))),
+      ].filter((b): b is NonNullable<typeof b> => !!b);
+      const firstLineY = Math.min(...result.lines.filter((l) => l.box).map((l) => boxToNcode(l.box!, png)?.minY ?? Infinity));
+      const hasTitle = !!(result.page_title || result.page_tag);
+      const lone = toDo
+        .filter((st) => st.tip !== 1 && st.pts.length >= 3 && !struck.has(st) && !gone.has(st) && !tickSet.has(st))
+        .map((st) => ({ st, b: strokeBounds([st])! }))
+        .filter(({ b }) => {
+          const cx = (b.minX + b.maxX) / 2;
+          const cy = (b.minY + b.maxY) / 2;
+          // il titolo e il #tag in cima non hanno un rettangolo: non sono tratti persi
+          if (hasTitle && cy < firstLineY) return false;
+          return !boxes.some((o) => cx >= o.minX - 0.5 && cx <= o.maxX + 0.5 && cy >= o.minY - 0.5 && cy <= o.maxY + 0.5);
+        });
+      // gruppi di tratti vicini
+      const groups: { b: { minX: number; minY: number; maxX: number; maxY: number }; n: number }[] = [];
+      // tratti grandi in larghezza e in altezza (forme, non lettere: una parola saltata non diventa un disegno)
+      const Hl = letterHeight(visible);
+      const shapes = lone.filter(({ b }) => Math.min(b.maxX - b.minX, b.maxY - b.minY) >= 1.4 * Hl);
+      for (const { b } of shapes.sort((a, c) => a.b.minX - c.b.minX)) {
+        const g = groups.find((o) => b.minX <= o.b.maxX + 1.5 && b.maxX >= o.b.minX - 1.5 && b.minY <= o.b.maxY + 1.5 && b.maxY >= o.b.minY - 1.5);
+        if (g) {
+          g.b = { minX: Math.min(g.b.minX, b.minX), minY: Math.min(g.b.minY, b.minY), maxX: Math.max(g.b.maxX, b.maxX), maxY: Math.max(g.b.maxY, b.maxY) };
+          g.n++;
+        } else groups.push({ b: { ...b }, n: 1 });
+      }
+      for (const g of groups) {
+        if (g.n < 4 || Math.max(g.b.maxX - g.b.minX, g.b.maxY - g.b.minY) < 3) continue;
+        const px = (x: number) => Math.round((x - png.ox) * png.scale);
+        const py = (y: number) => Math.round((y - png.oy) * png.scale);
+        result.drawings.push({ box: [px(g.b.minX - 0.3), py(g.b.minY - 0.3), px(g.b.maxX + 0.3), py(g.b.maxY + 0.3)], labels: [], text_side: "none", lines_beside: 0 } as never);
+        // il segnaposto dove sta sulla carta: dopo l'ultima riga che sta sopra il disegno
+        let at = 0;
+        result.lines.forEach((l, i) => {
+          const lb = l.box ? boxToNcode(l.box, png) : null;
+          if (lb && (lb.minY + lb.maxY) / 2 < g.b.minY) at = i + 1;
+        });
+        result.lines.splice(at, 0, { kind: "text", text: `[[drawing ${result.drawings.length}]]`, checked: false, due: "", time: "" });
+        this.log(`${g.n} tratti nuovi non erano nella risposta (un disegno che Claude non ha visto?): li metto come disegno.`);
       }
     }
 
@@ -1756,7 +1895,7 @@ export class Transcriber {
     }
     // task che il telefono aveva già messo nella nota del giorno: la trascrizione prende il loro posto
     // (in tutte le parti della pagina: anche i task sotto un titolo a metà pagina, es. "#task Task")
-    if (!force) await adoptPhoneTasks(this.app, [...result.lines, ...groups.slice(1).flatMap((g) => g.lines)], (m) => this.log(`Pagina ${key.page}: ${m}`));
+    if (!force) await adoptPhoneTasks(this.app, [...result.lines, ...groups.slice(1).flatMap((g) => g.lines)], (m) => this.log(`Pagina ${key.page}: ${m}`), writtenAt);
     // la pagina scrive nella nota del giorno in cui è cominciata ("2026-10-26"), ma queste righe le hai scritte oggi:
     // senza un giorno sulla carta, sono di oggi (un appuntamento "alle 9:00" scritto stanotte è di oggi, non di ieri)
     // Ogni riga va nella nota del giorno in cui l'hai scritta: le righe di oggi su una pagina cominciata ieri non

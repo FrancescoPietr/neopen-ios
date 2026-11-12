@@ -130,7 +130,7 @@ export interface NeoPenSettings {
    * Dove sta sulla carta ogni riga trascritta (per pagina, unità Ncode): una modifica scritta dopo su quella riga
    * cambia proprio quella riga della nota.
    */
-  lineRows?: Record<string, { bid: string; text: string; y: number; x0: number; x1: number }[]>;
+  lineRows?: Record<string, { bid: string; text: string; y: number; x0: number; x1: number; inferred?: boolean; at?: number }[]>;
   /**
    * id pagina → parti della pagina nella nota di un altro giorno: righe scritte in un giorno successivo su una pagina
    * cominciata prima vanno nella nota del giorno in cui le hai scritte (`of` = la parte della pagina da cui vengono).

@@ -46,6 +46,8 @@ function doubleStroke(s: Stroke, b: Box): number | null {
   const w = b.x1 - b.x0;
   const h = b.y1 - b.y0;
   if (w < 2 || h > 2.5 || h < 0.2) return null;
+  // una linea doppia è lunga e bassa: una stella o uno sgorbio fatti in un tratto (alti quanto larghi) no
+  if (w < 3 * h) return null;
   const n = Math.floor(s.pts.length / 3);
   if (n < 4) return null;
   // punto di inversione: il più a destra (o il più a sinistra) lontano dagli estremi

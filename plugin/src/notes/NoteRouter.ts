@@ -719,7 +719,13 @@ export class NoteRouter {
 
   /** La nota ha già questo titolo (nome o intestazione)? */
   hasTitle(key: PageKey, title: string): boolean {
-    return this.settings().pageNotes[pageId(key)]?.title === title;
+    const ref = this.settings().pageNotes[pageId(key)];
+    if (!ref) return false;
+    if (ref.title === title) return true;
+    // la nota porta già questo titolo nel nome (rinominata quando il titolo è arrivato): niente intestazione doppia
+    const loose = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    const base = ref.path.split("/").pop()!.replace(/\.md$/, "");
+    return !!loose(title) && loose(base) === loose(title);
   }
 
   ruleFor(tag?: string): TagRule | undefined {

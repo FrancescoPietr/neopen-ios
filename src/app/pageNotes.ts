@@ -258,7 +258,6 @@ export class PageNotes {
     // da qui le pagine le trascrive solo il telefono: Obsidian (PC o iPhone) lo legge nello script e non le rifà
     await this.heartbeat();
     const pages: EnginePage[] = [...this.store.pages.values()].map((r) => ({ key: r.key, strokes: [...r.strokes] }));
-    const countBefore = new Map(pages.map((p) => [keyLabel(p.key), p.strokes.length]));
     if (!pages.some((p) => engine.pageNeedsWork(settings, p))) return;
     // the notes as they are now: afterwards the calendar follows what the transcription changed (agenda.followPen)
     await agenda.freshTasks();
@@ -291,14 +290,6 @@ export class PageNotes {
       this.wanted = true;
       this.notBefore = Date.now() + 3 * 60_000;
       return;
-    }
-    // tratti arrivati mentre trascrivevo (gli ultimi, mandati dalla penna mentre si spegneva): si rifà subito, non
-    // dopo i 2 minuti di attesa (con l'app in sottofondo iOS la sospende e l'attesa non finisce mai)
-    const later = [...this.store.pages.values()].filter((p) => p.strokes.length > (countBefore.get(keyLabel(p.key)) ?? 0));
-    if (later.length) {
-      this.log(`Tratti arrivati mentre trascrivevo (${later.map((p) => keyLabel(p.key)).join(", ")}): li trascrivo subito.`);
-      this.wanted = true;
-      setTimeout(() => this.tick(), 1500);
     }
     if (r.status === "ok") {
       this.log(`Note di Obsidian aggiornate (${r.pages.length === 1 ? "1 pagina" : `${r.pages.length} pagine`}).`);
