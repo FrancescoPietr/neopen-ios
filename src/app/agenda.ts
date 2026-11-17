@@ -96,6 +96,9 @@ class Agenda {
     AppState.addEventListener("change", (s) => {
       if (s === "active") {
         void this.refresh();
+        // anche l'elenco dei calendari: un calendario aggiunto o acceso nel frattempo (es. Google in Impostazioni →
+        // Calendario → Account) altrimenti resterebbe fuori fino al riavvio dell'app
+        void this.initCalendar(false);
         this.dropEvents();
       }
     });
