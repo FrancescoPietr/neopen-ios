@@ -7,7 +7,7 @@ public class NeoPenBleModule: Module {
   public func definition() -> ModuleDefinition {
     Name("NeoPenBle")
 
-    Events("onState", "onReady", "onData", "onClosed", "onLog", "onHttpDone")
+    Events("onState", "onReady", "onData", "onClosed", "onLog", "onHttpDone", "onCalendarChanged")
 
     OnStartObserving {
       DispatchQueue.main.async { [weak self] in
@@ -15,11 +15,13 @@ public class NeoPenBleModule: Module {
         PenBluetooth.shared.sink = { name, body in self?.sendEvent(name, body) }
       }
       BackgroundHttp.shared.onDone = { [weak self] id in self?.sendEvent("onHttpDone", ["id": id]) }
+      CalendarSync.observe { [weak self] in self?.sendEvent("onCalendarChanged", [:]) }
     }
 
     OnStopObserving {
       DispatchQueue.main.async { PenBluetooth.shared.sink = nil }
       BackgroundHttp.shared.onDone = nil
+      CalendarSync.stop()
     }
 
     AsyncFunction("getState") { () -> [String: Any] in
@@ -125,6 +127,11 @@ public class NeoPenBleModule: Module {
 
     Function("readShared") { (name: String) -> String? in
       SharedAgenda.read(name)
+    }
+
+    /// iOS scarica subito le novità dei calendari (Google, iCloud) senza aprire l'app Calendario.
+    Function("refreshCalendars") {
+      CalendarSync.refresh()
     }
 
     Function("reloadWidgets") {

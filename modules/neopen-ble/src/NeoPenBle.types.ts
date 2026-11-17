@@ -12,6 +12,8 @@ export type NeoPenBleModuleEvents = {
   onLog: (e: { message: string }) => void;
   /** A request started with startBackgroundPost is over: Documents/http/<id>.done is there. */
   onHttpDone: (e: { id: string }) => void;
+  /** I calendari dell'iPhone sono cambiati (un evento arrivato da Google, spostato nell'app Calendario…). */
+  onCalendarChanged: () => void;
 };
 
 export type BleSnapshot = { state: BleState; penName: string; hasPen: boolean; launchedForBluetooth: boolean };

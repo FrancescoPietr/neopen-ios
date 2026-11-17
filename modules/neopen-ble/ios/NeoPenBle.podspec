@@ -11,7 +11,7 @@ Pod::Spec.new do |s|
   s.source         = { git: '' }
   s.static_framework = true
   s.swift_version  = '5.9'
-  s.frameworks     = 'CoreBluetooth', 'WidgetKit', 'ActivityKit'
+  s.frameworks     = 'CoreBluetooth', 'WidgetKit', 'ActivityKit', 'EventKit'
 
   s.dependency 'ExpoModulesCore'
 

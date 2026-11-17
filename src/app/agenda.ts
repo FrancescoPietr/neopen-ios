@@ -92,9 +92,29 @@ class Agenda {
     this.started = true;
     void this.refresh();
     void this.initCalendar(false);
+    // Google/iCloud: iOS scarica le novità solo se qualcuno lo chiede (di solito l'app Calendario). Lo chiediamo noi
+    // all'avvio, tornando nell'app e ogni pochi minuti mentre è aperta; quando arrivano, la lista si rilegge.
+    this.syncCalendars();
+    setInterval(() => {
+      if (AppState.currentState === "active") this.syncCalendars();
+    }, 3 * 60_000);
+    let calTimer: ReturnType<typeof setTimeout> | null = null;
+    try {
+      NeoPenBle.addListener("onCalendarChanged", () => {
+        if (calTimer) clearTimeout(calTimer);
+        calTimer = setTimeout(() => {
+          calTimer = null;
+          void this.initCalendar(false);
+          this.dropEvents();
+        }, 800);
+      });
+    } catch {
+      // (senza il modulo nativo: niente avvisi, restano i controlli tornando nell'app)
+    }
     // back to the app: files may have changed in Obsidian, events in the Calendar app
     AppState.addEventListener("change", (s) => {
       if (s === "active") {
+        this.syncCalendars();
         void this.refresh();
         // anche l'elenco dei calendari: un calendario aggiunto o acceso nel frattempo (es. Google in Impostazioni →
         // Calendario → Account) altrimenti resterebbe fuori fino al riavvio dell'app
@@ -360,6 +380,16 @@ class Agenda {
 
   // ---------------------------------------------------------------- calendar
 
+  /** iOS scarica subito le novità degli account dei calendari (Google, iCloud), senza aprire l'app Calendario. */
+  private syncCalendars(): void {
+    if (this.snap.calendarAccess !== "granted") return;
+    try {
+      NeoPenBle.refreshCalendars();
+    } catch {
+      // modulo nativo vecchio (senza questa funzione): pazienza
+    }
+  }
+
   async initCalendar(ask: boolean): Promise<void> {
     try {
       let p = await Cal.getCalendarPermissions();
@@ -369,10 +399,12 @@ class Agenda {
         return;
       }
       const cals = await Cal.getCalendars(Cal.EntityTypes.EVENT);
+      const first = this.snap.calendarAccess !== "granted";
       this.set({
         calendarAccess: "granted",
         calendars: cals.map((c) => ({ id: c.id, title: c.title, color: c.color ?? "#0A63D6", writable: !!c.allowsModifications })),
       });
+      if (first) this.syncCalendars();
     } catch (e) {
       this.set({ error: `Calendario: ${e instanceof Error ? e.message : String(e)}` });
     }

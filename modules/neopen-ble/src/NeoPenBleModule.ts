@@ -42,6 +42,8 @@ declare class NeoPenBleModule extends NativeModule<NeoPenBleModuleEvents> {
   /** File shared with the widgets (App Group). Returns "" or the error. */
   writeShared(name: string, text: string): string;
   readShared(name: string): string | null;
+  /** iOS scarica subito le novità dei calendari (Google, iCloud) senza bisogno di aprire l'app Calendario. */
+  refreshCalendars(): void;
   /** The widgets read their data again. */
   reloadWidgets(): void;
   /** Live Activities allowed (Settings → NeoTransfer → Live Activities). */
