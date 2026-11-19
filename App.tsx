@@ -1,6 +1,6 @@
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { AppState, Linking, Pressable, StyleSheet, View } from "react-native";
+import { AppState, Linking, Pressable, StyleSheet, View, useWindowDimensions } from "react-native";
 import { BackBar, Glyph, HandFrame, HandLine, Paper, Text } from "./src/ui/theme/ui";
 import { T, theme, themed } from "./src/ui/theme/theme";
 import { roughBlob } from "./src/ui/theme/rough";
@@ -26,6 +26,13 @@ const TABS: { id: Tab; icon: string; label: string }[] = [
   { id: "calendar", icon: "tab.calendar", label: "Calendario" },
   { id: "pen", icon: "tab.pen", label: "Penna" },
 ];
+/** Schermo largo (iPhone Duo aperto, pieghevoli): attività e calendario stanno insieme, uno accanto all'altro. */
+const WIDE_TABS: { id: Tab; icon: string; label: string }[] = [
+  { id: "tasks", icon: "tab.calendar", label: "Agenda" },
+  { id: "pen", icon: "tab.pen", label: "Penna" },
+];
+/** Da quanti punti di larghezza lo schermo si divide in due (un iPhone normale, anche in orizzontale, no). */
+const WIDE = 700;
 
 /** Calendar and task manager (Fantastical + Todoist) on the Obsidian vault, plus the pen. */
 export default function App() {
@@ -66,9 +73,16 @@ export default function App() {
     return () => sub.remove();
   }, []);
 
-  const contextDay = tab === "calendar" ? day : null;
+  // iPhone Duo aperto (o un altro schermo largo): attività a sinistra e calendario a destra, insieme. Chiuso torna
+  // tutto come su un iPhone normale, sulla scheda dov'eri.
+  const { width } = useWindowDimensions();
+  const wide = width >= WIDE;
+  const agendaTab = tab === "tasks" || tab === "calendar";
+  const contextDay = tab === "calendar" || (wide && agendaTab) ? day : null;
   // the + button: on the tasks and on a day of the calendar (the month has its own «+ Nuovo»)
-  const showFab = tab === "tasks" || (tab === "calendar" && !!day);
+  const showFab = (wide && agendaTab) || tab === "tasks" || (tab === "calendar" && !!day);
+  const tabs = wide ? WIDE_TABS : TABS;
+  const tabOn = (id: Tab) => (wide && id === "tasks" ? agendaTab : tab === id);
 
   return (
     <SafeAreaProvider>
@@ -95,10 +109,22 @@ export default function App() {
         ) : null}
 
         <View style={{ flex: 1 }}>
-          {tab === "tasks" ? <TasksScreen onTask={setTask} /> : null}
-          {tab === "calendar" ? <CalendarScreen onTask={setTask} onEvent={setEvent} onDayChange={setDay} onAdd={() => setAdding(true)} jump={jump} /> : null}
+          {wide && agendaTab ? (
+            <View style={styles.split}>
+              <View style={{ flex: 1 }}>
+                <TasksScreen onTask={setTask} />
+              </View>
+              <View style={styles.splitLine} />
+              <View style={{ flex: 1.25 }}>
+                <CalendarScreen onTask={setTask} onEvent={setEvent} onDayChange={setDay} onAdd={() => setAdding(true)} jump={jump} />
+              </View>
+            </View>
+          ) : null}
+          {!wide && tab === "tasks" ? <TasksScreen onTask={setTask} /> : null}
+          {!wide && tab === "calendar" ? <CalendarScreen onTask={setTask} onEvent={setEvent} onDayChange={setDay} onAdd={() => setAdding(true)} jump={jump} /> : null}
           {tab === "pen" ? (
-            <View style={{ flex: 1 }}>
+            // (su uno schermo largo le impostazioni restano larghe come su un telefono, in mezzo: righe lunghe si leggono male)
+            <View style={[{ flex: 1 }, wide && styles.narrow]}>
               {/* Aspetto has its own bar (inside it, the drawing screen goes back to Aspetto, not to Penna) */}
               {pen !== "home" && pen !== "look" && pen !== "alerts" ? <BackBar label="Penna" onPress={() => setPen("home")} title={PEN_TITLES[pen]} /> : null}
               {pen === "home" ? (
@@ -127,10 +153,10 @@ export default function App() {
 
         <SafeAreaView edges={["bottom"]} style={styles.tabs}>
           <HandLine style={{ position: "absolute", left: 6, right: 6, top: -3 }} seed="tabs" />
-          {TABS.map((t) => (
+          {tabs.map((t) => (
             <Pressable key={t.id} onPress={() => setTab(t.id)} style={styles.tab}>
-              <Glyph name={t.icon} size={26} color={tab === t.id ? C.accent : T.faint} weight={tab === t.id ? 1.2 : 1} />
-              <Text style={[styles.tabLabel, tab === t.id && { color: C.accent, fontWeight: "700" }]}>{t.label}</Text>
+              <Glyph name={t.icon} size={26} color={tabOn(t.id) ? C.accent : T.faint} weight={tabOn(t.id) ? 1.2 : 1} />
+              <Text style={[styles.tabLabel, tabOn(t.id) && { color: C.accent, fontWeight: "700" }]}>{t.label}</Text>
             </Pressable>
           ))}
         </SafeAreaView>
@@ -147,6 +173,9 @@ export default function App() {
 const styles = themed(() =>
   StyleSheet.create({
     root: { flex: 1 },
+    split: { flex: 1, flexDirection: "row" },
+    splitLine: { width: StyleSheet.hairlineWidth, backgroundColor: T.faint, opacity: 0.5, marginVertical: 8 },
+    narrow: { width: "100%", maxWidth: 620, alignSelf: "center" },
     bar: { height: 44, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 12 },
     back: { fontSize: 18, color: T.accent },
     title: { fontSize: 19, fontWeight: "700", color: T.ink },
