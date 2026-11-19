@@ -10,7 +10,11 @@ import WidgetKit
 struct NeoLiveActivity: Widget {
   var body: some WidgetConfiguration {
     ActivityConfiguration(for: NeoAttributes.self) { context in
+      // il colore del foglio disegnato dalla vista stessa, pieno: la sola tinta di sfondo sul blocco schermo iOS la
+      // mescola col vetro e con lo sfondo (il crema diventava giallo)
       LockView(state: context.state, stale: context.isStale)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(hex: context.state.paper))
         .activityBackgroundTint(Color(hex: context.state.paper))
         .activitySystemActionForegroundColor(Color(hex: context.state.ink))
     } dynamicIsland: { context in
