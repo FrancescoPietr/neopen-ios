@@ -1,6 +1,7 @@
 // Neo Pen per Obsidian: la memoria della penna è l'archivio; il plugin si collega quando
 // la penna si accende, legge le pagine cambiate, trascrive con Claude e si scollega.
 
+import { applyInPlace, clone, mergeSettings } from "./settingsMerge";
 import { Modal, Notice, Platform, Plugin, Setting, TFile, TFolder } from "obsidian";
 import { NoteRouter } from "./notes/NoteRouter";
 import { markersExtension, refreshMarkers } from "./editor/markers";
@@ -735,11 +736,20 @@ export default class NeoPenPlugin extends Plugin {
 
   /** Un altro dispositivo ha cambiato le impostazioni (pagine trascritte, note…): si rileggono. */
   async onExternalSettingsChange(): Promise<void> {
-    // Sul PC acceso le impostazioni giuste sono quelle in memoria: una copia arrivata da un altro dispositivo
-    // (magari vecchia) non le sostituisce. Si rileggono solo se il PC è rimasto fermo a lungo (sospensione):
-    // allora può averle aggiornate l'iPhone, che trascrive quando il PC è spento.
-    if (!Platform.isMobile && Date.now() - this.lastRelayPull < 10 * 60_000) return;
-    await this.loadSettings();
+    // Le pagine e le note le scrive l'app sul telefono: quello che arriva dal disco si prende sempre, tenendo solo le
+    // cose cambiate qui e non ancora salvate (unione a tre, come nel salvataggio).
+    this.saving = this.saving.then(async () => {
+      try {
+        const disk = ((await this.loadData()) ?? {}) as Record<string, unknown>;
+        const withDefaults = Object.assign(JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), disk) as Record<string, unknown>;
+        const merged = mergeSettings(this.base, this.settings as never, withDefaults);
+        applyInPlace(this.settings as never, merged);
+        this.base = clone(withDefaults);
+      } catch (e) {
+        this.log(`Impostazioni cambiate altrove non rilette: ${(e as Error)?.message ?? e}`);
+      }
+    });
+    await this.saving;
     this.applyVisibility();
   }
 
@@ -1153,12 +1163,16 @@ export default class NeoPenPlugin extends Plugin {
   async loadSettings(): Promise<void> {
     const defaults = JSON.parse(JSON.stringify(DEFAULT_SETTINGS)) as NeoPenSettings;
     const data = ((await this.loadData()) ?? {}) as Partial<NeoPenSettings>;
-    this.settings = Object.assign(defaults, data);
+    const loaded = Object.assign(defaults, data);
+    // (una ricarica tiene gli stessi oggetti: altre parti del plugin hanno un riferimento agli elenchi)
+    if (this.settings) applyInPlace(this.settings as never, loaded as never);
+    else this.settings = loaded;
+    this.base = clone(loaded) as never;
     if (!this.settings.calendarSecret) {
       const b = new Uint8Array(18);
       crypto.getRandomValues(b);
       this.settings.calendarSecret = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
-      if (!Platform.isMobile) await this.saveData(this.settings);
+      if (!Platform.isMobile) await this.saveSettings();
     }
     const version = data.settingsVersion ?? 1;
     // v0.5: la pausa breve di prima (10 s) faceva tante chiamate: passa a 60 s
@@ -1197,31 +1211,31 @@ export default class NeoPenPlugin extends Plugin {
         this.calendarHandedOver = true;
       }
       this.settings.settingsVersion = Math.max(13, this.settings.settingsVersion);
-      if (!Platform.isMobile && version >= 12) await this.saveData(this.settings);
+      if (!Platform.isMobile && version >= 12) await this.saveSettings();
     }
     // v0.15: le scritte sopra i disegni diventano righe accanto (come il testo di fianco)
     if (version < 12) {
       this.needsDrawingBlocks = true;
       this.settings.settingsVersion = Math.max(12, this.settings.settingsVersion);
-      if (!Platform.isMobile && version >= 11) await this.saveData(this.settings);
+      if (!Platform.isMobile && version >= 11) await this.saveSettings();
     }
     // v0.14.1: disegni trasparenti con le scritte come testo della nota
     if (version < 11) {
       this.needsDrawingBlocks = true;
       this.settings.settingsVersion = Math.max(11, this.settings.settingsVersion);
-      if (!Platform.isMobile && version >= 10) await this.saveData(this.settings);
+      if (!Platform.isMobile && version >= 10) await this.saveSettings();
     }
     // v0.14: disegno della pagina in un riquadro chiuso, #tag del testo nelle proprietà (anche nelle note vecchie)
     if (version < 10) {
       this.needsTidyV14 = true;
       this.settings.settingsVersion = Math.max(10, this.settings.settingsVersion);
-      if (!Platform.isMobile && version >= 9) await this.saveData(this.settings);
+      if (!Platform.isMobile && version >= 9) await this.saveSettings();
     }
     // v0.13.1: le pagine dall'iPhone si controllano ogni minuto (erano 2)
     if (version < 9) {
       if (this.settings.relayMinutes === 2) this.settings.relayMinutes = 1;
       this.settings.settingsVersion = Math.max(9, this.settings.settingsVersion);
-      if (!Platform.isMobile && version >= 8) await this.saveData(this.settings);
+      if (!Platform.isMobile && version >= 8) await this.saveSettings();
     }
     // v0.13: le note scritte vanno in "Me", in una cartella per quaderno, senza la data nel nome
     if (version < 8) {
@@ -1229,19 +1243,37 @@ export default class NeoPenPlugin extends Plugin {
       if (old === (this.settings.rootFolder || "NeoPen")) this.settings.notesFolder = "Me";
       this.notebookMoveFrom = old;
       this.settings.settingsVersion = Math.max(8, this.settings.settingsVersion);
-      if (!Platform.isMobile) await this.saveData(this.settings);
+      if (!Platform.isMobile) await this.saveSettings();
     }
     if (version < 7) {
       this.settings.settingsVersion = Math.max(7, this.settings.settingsVersion);
-      if (!Platform.isMobile) await this.saveData(this.settings);
+      if (!Platform.isMobile) await this.saveSettings();
     }
   }
 
+  /** Le impostazioni come erano sul disco l'ultima volta che le abbiamo lette o scritte. */
+  private base: Record<string, unknown> = {};
+  private saving: Promise<void> = Promise.resolve();
+
+  /**
+   * Salva solo quello che è cambiato qui, sopra quello che c'è ora sul disco: l'app sul telefono (che trascrive) e
+   * Obsidian sull'altro dispositivo scrivono lo stesso file, e una copia vecchia in memoria cancellerebbe le loro
+   * pagine e note (pagine che rinascono in una nota nuova, spunte che non trovano più il task).
+   */
   async saveSettings(): Promise<void> {
-    // Le impostazioni le scrive il PC. L'iPhone solo quando trascrive lui (PC spento): così due dispositivi non si
-    // sovrascrivono a vicenda pagine, note e stato delle trascrizioni.
     if (Platform.isMobile && !this.mobileWorking) return;
-    await this.saveData(this.settings);
+    this.saving = this.saving.then(async () => {
+      try {
+        const disk = ((await this.loadData()) ?? {}) as Record<string, unknown>;
+        const merged = mergeSettings(this.base, this.settings as never, disk);
+        applyInPlace(this.settings as never, merged);
+        await this.saveData(this.settings);
+        this.base = clone(this.settings) as never;
+      } catch (e) {
+        this.log(`Impostazioni non salvate: ${(e as Error)?.message ?? e}`);
+      }
+    });
+    return this.saving;
   }
 }
 

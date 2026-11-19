@@ -143,7 +143,9 @@ export function findTaskBoxes(old: Stroke[], all: Stroke[]): TaskBox[] {
         .map((s) => bounds([s]))
         .filter((sb) => !overBox(sb) && sb.x0 >= b.x1 - 0.3 * size && sb.x0 <= b.x1 + 4 * H)
         .reduce((m, sb) => Math.min(m, sb.x0), Infinity);
-      const right = Number.isFinite(next) && next - b.x1 >= 0.35 * size;
+      // (una casella ben fatta, o con la spunta dentro, può stare attaccata alla parola: "☑manda")
+      const clearBox = !!b.ticked || !!isBoxShape(group, H, false);
+      const right = Number.isFinite(next) && next - b.x1 >= (clearBox ? -0.15 : 0.35) * size;
       // all'inizio della riga: niente scritta a sinistra sulla stessa riga
       const left = others.some((s) => {
         const sb = bounds([s]);

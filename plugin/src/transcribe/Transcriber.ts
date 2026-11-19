@@ -1523,12 +1523,28 @@ export class Transcriber {
 
     // titoli già letti male una volta e corretti da te (rinominando la nota)
     // "#task" sottolineato due volte in cima: è il tag della pagina, non il suo titolo
+    // (anche senza il # davanti, quando la parola è un tag con una sua regola: "task" letto come titolo è #task)
     {
-      const m = /^#([\p{L}\p{N}_\-/]+)$/u.exec(result.page_title.trim());
-      if (m) {
-        if (!result.page_tag) result.page_tag = m[1].toLowerCase();
+      const asTag = (t: string) => {
+        const m = /^#?([\p{L}\p{N}_\-/]+)$/u.exec(t.trim());
+        if (!m) return "";
+        const w = m[1].toLowerCase();
+        return t.trim().startsWith("#") || this.router.ruleFor(w) ? w : "";
+      };
+      const tag = asTag(result.page_title);
+      if (tag && (!result.page_tag || result.page_tag === tag)) {
+        result.page_tag = tag;
         this.log(`«${result.page_title}» in cima è il tag della pagina, non un titolo.`);
         result.page_title = "";
+      }
+      // un titolo a metà pagina che è solo un tag ("== task"): un gruppo del tag, senza titolo
+      for (const l of result.lines) {
+        if (l.kind !== "newnote") continue;
+        const t = asTag(l.text);
+        if (t && (!l.tag || l.tag === t)) {
+          l.tag = t;
+          l.text = "";
+        }
       }
     }
     if (result.page_title) result.page_title = this.router.fixTitle(result.page_title);
@@ -1987,6 +2003,26 @@ export class Transcriber {
         if (!newMd) continue;
         await this.app.vault.process(target.file, (content) => writeIntoBlock(content, newMd, "append", false, target.blockId));
         fixed.push(newMd.replace(/^- \[[ xX]\] /, ""));
+      }
+      // non trovate nella nota della pagina: si cercano negli altri blocchi di questa pagina nel vault (la pagina è
+      // rinata in un'altra nota, ma il task sta ancora nella nota di prima)
+      if (toCheck.length) {
+        const orphans = await this.router.orphanParts(key);
+        for (const fuzzy of [false, true]) {
+          for (const sg of orphans) {
+            if (!toCheck.length) break;
+            await this.app.vault.process(sg.file, (content) => {
+              const r = checkTasksInBlock(content, toCheck, sg.blockId, fuzzy);
+              if (r.count) {
+                checked += r.count;
+                toCheck = toCheck.filter((t) => !r.matched.includes(t));
+                notesTouched.add(sg.file.path);
+                this.log(`Spunta trovata in "${sg.file.basename}" (un'altra nota di questa pagina).`);
+              }
+              return r.content;
+            });
+          }
+        }
       }
       for (const t of toCheck) this.log(`Spunta su «${t}»: non trovo un task da spuntare con quel testo nella nota.`);
     }

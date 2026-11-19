@@ -231,3 +231,34 @@ test("engine: each line's writing time comes from the pen strokes inside it", as
   assert.equal(new Date(t[1]).getDate(), 26, "no box: the line before");
   assert.equal(new Date(t[2]).getDate(), 27);
 });
+
+test("engine: settings overwritten by an old copy: the page finds its note again, and a tick finds its task", async () => {
+  const { io } = vault();
+  const calls = { n: 0 };
+  const log: string[] = [];
+  const first = page(26, 2);
+  assert.equal((await transcribePages(options(io, answer(["[ ] fare set-up video", "[ ] volo per SF"]), calls, log), [{ key: key(22), strokes: first }])).status, "ok", log.join("\n"));
+  // Obsidian on the PC saves its old copy: page 22 is forgotten
+  const s = JSON.parse(io.read(".obsidian/plugins/neo-pen/data.json")!);
+  delete s.pageNotes["3_27_746_22"];
+  io.write(".obsidian/plugins/neo-pen/data.json", JSON.stringify(s));
+  // a tick on the page (same day): no new note, the task in the daily note is ticked
+  const tick = [...first, word(at(26, 9, 50), 9, 0)];
+  const r = await transcribePages(options(io, answer([], { checked_tasks: ["fare set-up video"] }), calls, log), [{ key: key(22), strokes: tick }]);
+  assert.equal(r.status, "ok", log.join("\n"));
+  const daily = io.read("Daily/2026-10-26.md")!;
+  assert.match(daily, /- \[x\] fare set-up video/, daily + "\n" + log.join("\n"));
+  assert.ok(!fs.existsSync(path.join((io as any).root ?? "", "Me")) || !log.some((m) => /Creata la nota "/.test(m)), log.join("\n"));
+  const after = JSON.parse(io.read(".obsidian/plugins/neo-pen/data.json")!);
+  assert.equal(after.pageNotes["3_27_746_22"].path, "Daily/2026-10-26.md");
+});
+
+test("engine: «task» read as the page title is the #task tag", async () => {
+  const { io } = vault();
+  const calls = { n: 0 };
+  const log: string[] = [];
+  const r = await transcribePages(options(io, answer(["[ ] chiamare"], { page_title: "task", page_tag: "" }), calls, log), [{ key: key(23), strokes: page(26, 1) }]);
+  assert.equal(r.status, "ok", log.join("\n"));
+  assert.match(io.read("Daily/2026-10-26.md") ?? "", /- \[ \] chiamare/, log.join("\n"));
+  assert.ok(!log.some((m) => /Creata la nota "/.test(m)), log.join("\n"));
+});

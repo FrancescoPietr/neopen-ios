@@ -101,6 +101,73 @@ export class NoteRouter {
     return null;
   }
 
+  /**
+   * La pagina non ha (più) una nota nelle impostazioni, ma il suo testo è già in una nota (le impostazioni sono state
+   * sovrascritte da una copia vecchia, o rifatte): si ritrova cercando il suo blocco nel vault, invece di creare una
+   * nota doppia. Si ritrovano anche le altre parti della pagina (id~2, id~3…).
+   */
+  async recover(key: PageKey): Promise<RoutedNote | null> {
+    const id = pageId(key);
+    const s = this.settings();
+    const found = new Map<string, TFile>();
+    const re = new RegExp(`<!-- neopen:testo:(${id}(?:~\\d+)?) -->`, "g");
+    for (const f of this.app.vault.getMarkdownFiles()) {
+      if (this.inBin(f.path)) continue;
+      let text: string;
+      try {
+        text = await this.app.vault.read(f);
+      } catch {
+        continue;
+      }
+      if (!text.includes(`neopen:testo:${id}`)) continue;
+      for (const m of text.matchAll(re)) if (!found.has(m[1])) found.set(m[1], f);
+    }
+    const root = found.get(id);
+    if (!root) return null;
+    const isDaily = this.isDaily(root);
+    s.pageNotes[id] = { path: root.path, drawing: !isDaily, calendar: isDaily };
+    const others = [...found.keys()].filter((b) => b !== id).sort((a, b) => Number(a.split("~")[1]) - Number(b.split("~")[1]));
+    for (const b of others) {
+      const f = found.get(b)!;
+      if (!s.pageNotes[b]) s.pageNotes[b] = { path: f.path, drawing: !this.isDaily(f), calendar: this.isDaily(f) };
+    }
+    // le altre parti: nella nota di un altro giorno sono righe scritte un altro giorno, le altre sono titoli
+    const segs = others.filter((b) => !(this.isDaily(found.get(b)!) && found.get(b)!.path !== root.path && isDaily));
+    const days = others.filter((b) => !segs.includes(b));
+    if (segs.length) (s.segments = s.segments ?? {})[id] = [id, ...segs];
+    if (days.length) (s.daySegments = s.daySegments ?? {})[id] = days.map((b) => ({ bid: b, of: id }));
+    await this.save();
+    this.log(`Pagina ${key.page}: ritrovata la sua nota "${root.basename}"${others.length ? ` (con ${others.length} altre parti)` : ""}, scrivo lì.`);
+    return { file: root, blockId: id, kind: isDaily ? "daily" : "note" };
+  }
+
+  /**
+   * Blocchi di questa pagina nel vault che le impostazioni non conoscono più (la pagina è rinata in un'altra nota dopo
+   * che le impostazioni sono state sovrascritte): una spunta sulla carta deve trovare il suo task anche lì.
+   */
+  async orphanParts(key: PageKey): Promise<RoutedNote[]> {
+    const id = pageId(key);
+    const known = new Set(this.partsOf(key).map((p) => `${p.file.path}#${p.blockId}`));
+    const out: RoutedNote[] = [];
+    const re = new RegExp(`<!-- neopen:testo:(${id}(?:~\\d+)?) -->`, "g");
+    for (const f of this.app.vault.getMarkdownFiles()) {
+      if (this.inBin(f.path)) continue;
+      let text: string;
+      try {
+        text = await this.app.vault.read(f);
+      } catch {
+        continue;
+      }
+      if (!text.includes(`neopen:testo:${id}`)) continue;
+      for (const m of text.matchAll(re)) {
+        if (known.has(`${f.path}#${m[1]}`)) continue;
+        known.add(`${f.path}#${m[1]}`);
+        out.push({ file: f, blockId: m[1], kind: this.isDaily(f) ? "daily" : "note" });
+      }
+    }
+    return out;
+  }
+
   /** Aggiorna i percorsi se una nota viene rinominata o spostata. */
   onRename(file: TFile, oldPath: string): void {
     let changed = false;
@@ -429,7 +496,7 @@ export class NoteRouter {
 
   /** Restituisce la nota della pagina, creandola (o aggiungendo la sezione) se serve. */
   async ensure(key: PageKey, info: PageInfo): Promise<RoutedNote> {
-    const existing = this.get(key);
+    const existing = this.get(key) ?? (await this.recover(key));
     if (existing) {
       await this.ensureBlock(existing, key);
       return existing;

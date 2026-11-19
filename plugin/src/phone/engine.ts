@@ -4,6 +4,7 @@
 // Usa le impostazioni del plugin (.obsidian/plugins/neo-pen/data.json) e ci salva lo stato (pagine trascritte, note),
 // e il "turno" NeoPen/_turno.json: se un altro dispositivo sta trascrivendo, aspetta.
 
+import { applyInPlace, clone, mergeSettings } from "../settingsMerge";
 import { App, host } from "./obsidian";
 import { canvasMaker } from "../render/png";
 import { SoftCanvas } from "./canvas";
@@ -129,8 +130,14 @@ export async function transcribePages(opts: PhoneEngineOptions, pages: PhonePage
   host.request = opts.request;
   host.notify = (m) => log(m.replace(/^Neo Pen:\s*/, ""));
   const app = new App(io, opts.vaultName, opts.templater);
+  // Obsidian (sull'iPhone o sul PC, via sincronizzazione) può scrivere lo stesso file mentre trascriviamo: si salva
+  // solo quello che è cambiato qui, sopra quello che c'è ora sul disco
+  let base = clone(settings) as unknown as Record<string, unknown>;
   const save = async () => {
+    const disk = readSettings(io);
+    if (disk) applyInPlace(settings as never, mergeSettings(base, settings as never, disk as never));
     io.write(SETTINGS_PATH, JSON.stringify(settings, null, 2));
+    base = clone(settings) as unknown as Record<string, unknown>;
   };
   // come in main.ts del plugin
   let router!: NoteRouter;
