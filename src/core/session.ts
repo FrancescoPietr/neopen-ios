@@ -215,6 +215,19 @@ export class PenSession {
       if (!pw?.ok) throw new SessionError("wrongPassword", `password sbagliata (${pw?.retry ?? 0}/${pw?.reset ?? 0} tentativi)`);
     }
     this.send(PenRequest.setTime(Date.now()));
+    // dopo che si è scaricata del tutto (o un reset) la penna può tornare alle impostazioni di fabbrica: senza
+    // accensione automatica non si accende più togliendo il tappo, senza memoria perde quello che scrivi da sola
+    this.log(
+      `Penna: batteria ${s.battery}%, accensione automatica ${s.autoPowerOn ? "sì" : "no"}, memoria ${s.offlineData ? "sì" : "no"}, spegnimento dopo ${s.autoShutdown} min.`
+    );
+    if (!s.autoPowerOn) {
+      this.send(PenRequest.setAutoPowerOn(true));
+      this.log("Accensione automatica della penna rimessa (era spenta: la penna si accendeva solo col pulsante).");
+    }
+    if (!s.offlineData) {
+      this.send(PenRequest.setOfflineData(true));
+      this.log("Memoria della penna riaccesa (era spenta: quello che scrivi senza telefono andava perso).");
+    }
     this.note({ type: "authorized", version: v!, settings: s });
     this.note({ type: "battery", level: s.battery });
     if (this.options.live) {

@@ -59,6 +59,10 @@ export const PenRequest = {
 
   /** Pen clock = phone time (stroke times depend on it). */
   setTime: (ms: number) => build(Cmd.settingChangeRequest, (w) => w.putShort(9).put(1).putLong(ms)),
+  /** Accensione automatica (togliendo il tappo o scrivendo): impostazione 4 della penna. */
+  setAutoPowerOn: (on: boolean) => build(Cmd.settingChangeRequest, (w) => w.putShort(2).put(4).put(on ? 1 : 0)),
+  /** Memoria dei tratti scritti senza telefono: impostazione 7 della penna. */
+  setOfflineData: (on: boolean) => build(Cmd.settingChangeRequest, (w) => w.putShort(2).put(7).put(on ? 1 : 0)),
 
   /** Live strokes from all notebooks. (While connected like this, the pen does NOT store them in memory.) */
   onlineAllNotes: () => build(Cmd.onlineDataRequest, (w) => w.putShort(2).put(0xff).put(0xff)),
