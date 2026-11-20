@@ -60,6 +60,37 @@ final class PenBluetooth: NSObject, @unchecked Sendable {
       CBCentralManagerOptionRestoreIdentifierKey: Self.restoreID,
       CBCentralManagerOptionShowPowerAlertKey: true,
     ])
+    // Con l'app aperta e la penna che non arriva (es. dopo che si è scaricata del tutto la richiesta di collegamento
+    // di iOS può restare bloccata): la si cerca anche "a vista", ogni tanto, e la si ricollega appena la si vede.
+    NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+      self?.rescan()
+    }
+    rescanTicker = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in
+      guard UIApplication.shared.applicationState == .active else { return }
+      self?.rescan()
+    }
+  }
+
+  private var rescanTicker: Timer?
+  private var rescanning = false
+  private var rescanLogged = false
+
+  /// La penna ricordata non si collega: la si cerca tra quelle accese qui vicino (per identificativo o per nome) e,
+  /// vista, la si collega da capo. Solo con l'app in primo piano (iOS non cerca "a vista" in sottofondo).
+  func rescan() {
+    guard let central, central.state == .poweredOn, hasPen, state == "waiting", !rescanning else { return }
+    rescanning = true
+    if !rescanLogged {
+      log("La penna non si è ancora collegata: la cerco anche qui vicino.")
+      rescanLogged = true
+    }
+    central.scanForPeripherals(withServices: nil, options: nil)
+    scanTimer?.invalidate()
+    scanTimer = Timer.scheduledTimer(withTimeInterval: 12, repeats: false) { [weak self] _ in
+      guard let self, self.rescanning else { return }
+      self.rescanning = false
+      self.central?.stopScan()
+    }
   }
 
   // ---------------------------------------------------------------- events for JavaScript
@@ -92,6 +123,7 @@ final class PenBluetooth: NSObject, @unchecked Sendable {
   /// First time: look for a powered-on pen and remember it.
   func searchPen() {
     guard let central, central.state == .poweredOn else { return }
+    rescanning = false
     state = "searching"
     log("Cerco la penna… (togli il tappo e tienila vicina)")
     central.scanForPeripherals(withServices: [Self.service16, Self.service128], options: nil)
@@ -198,8 +230,29 @@ extension PenBluetooth: CBCentralManagerDelegate {
   }
 
   func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String: Any], rssi RSSI: NSNumber) {
-    guard state == "searching" else { return }
     let name = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? peripheral.name ?? ""
+    // la penna ricordata, vista accesa mentre aspettavamo: si ricollega da capo (anche se ha cambiato identificativo)
+    if rescanning {
+      guard state == "waiting", peripheral.identifier == knownID || (!name.isEmpty && name == penName) else { return }
+      rescanning = false
+      scanTimer?.invalidate()
+      central.stopScan()
+      if let old = self.peripheral, old.identifier != peripheral.identifier {
+        central.cancelPeripheralConnection(old)
+        knownID = peripheral.identifier
+        log("La penna si presenta con un altro identificativo: la ricollego.")
+      } else if let old = self.peripheral {
+        // la vecchia richiesta di collegamento si butta e se ne fa una nuova
+        central.cancelPeripheralConnection(old)
+      }
+      log("Penna vista accesa: la collego.")
+      self.peripheral = peripheral
+      peripheral.delegate = self
+      central.connect(peripheral, options: nil)
+      state = "connecting"
+      return
+    }
+    guard state == "searching" else { return }
     guard name.range(of: "neo|smartpen|nwp|lamy|m1", options: [.regularExpression, .caseInsensitive]) != nil else { return }
     scanTimer?.invalidate()
     central.stopScan()
@@ -214,12 +267,20 @@ extension PenBluetooth: CBCentralManagerDelegate {
 
   func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
     log("Penna accesa: collegata.")
+    rescanLogged = false
+    if rescanning {
+      rescanning = false
+      scanTimer?.invalidate()
+      central.stopScan()
+    }
     self.peripheral = peripheral
     peripheral.delegate = self
     discover(peripheral)
   }
 
   func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
+    // (la vecchia richiesta buttata via quando la penna si è ripresentata con un altro identificativo)
+    if let current = self.peripheral, current.identifier != peripheral.identifier { return }
     writeChar = nil
     notifyChar = nil
     log(error.map { "Penna scollegata (\($0.localizedDescription))." } ?? "Penna scollegata.")

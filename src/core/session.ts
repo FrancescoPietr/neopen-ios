@@ -274,6 +274,8 @@ export class PenSession {
           this.ackLast(t, false);
           continue;
         }
+        const fixed = this.store.fixClock(t.strokes);
+        if (fixed) this.log(`Pagina ${keyLabel(key)}: ${fixed} tratti con l'orologio della penna azzerato (si era scaricata), messi all'ora di adesso.`);
         const r = this.store.record(key);
         const added = mergeStrokes(r, t.strokes);
         if (!t.damaged) {

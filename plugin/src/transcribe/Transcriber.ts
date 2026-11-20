@@ -734,7 +734,7 @@ export class Transcriber {
       }
     }
     if (!lines.length) return handled;
-    const writtenAt = Math.min(...fresh.map((st) => st.t).filter((t) => t > 1_000_000_000_000));
+    const writtenAt = Math.min(...fresh.map((st) => st.t).filter(plausibleTime));
     const today = new Date(Number.isFinite(writtenAt) ? writtenAt : Date.now()).toLocaleDateString("sv-SE");
     const H = letterHeight(visible);
     for (const e of edits) {
@@ -1012,7 +1012,7 @@ export class Transcriber {
         (hasContext ? " (il resto come contesto)…" : "…")
     );
     // "oggi" e "domani" sono rispetto a quando hai scritto (conta anche ritrascrivendo giorni dopo)
-    const writtenAt = Math.min(...toDo.map((st) => st.t).filter((t) => t > 1_000_000_000_000));
+    const writtenAt = Math.min(...toDo.map((st) => st.t).filter(plausibleTime));
     const today = new Date(Number.isFinite(writtenAt) ? writtenAt : Date.now()).toLocaleDateString("sv-SE"); // YYYY-MM-DD
     // nota già assegnata? (se sì, il testo già trascritto fa da contesto: tutte le parti della pagina, in ordine)
     let routed = this.router.get(key);
@@ -2398,7 +2398,7 @@ export function inlineTags(md: string): string[] {
  */
 export function timesOfLines(boxes: ({ minX: number; minY: number; maxX: number; maxY: number } | null)[], strokes: Stroke[], fallback: number): number[] {
   const ink = strokes
-    .filter((st) => st.tip !== 1 && st.pts.length >= 3 && st.t > 1_000_000_000_000)
+    .filter((st) => st.tip !== 1 && st.pts.length >= 3 && plausibleTime(st.t))
     .map((st) => {
       const b = strokeBounds([st])!;
       return { t: st.t, x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 };
@@ -2415,4 +2415,12 @@ export function timesOfLines(boxes: ({ minX: number; minY: number; maxX: number;
     }
     return prev;
   });
+}
+
+/**
+ * Un'ora della penna credibile: una penna scaricata del tutto riparte con l'orologio azzerato (anni fa) finché non si
+ * collega e l'app glielo rimette; quei tratti non devono finire nella nota di un giorno del 2000 (né del futuro).
+ */
+export function plausibleTime(t: number): boolean {
+  return t > Date.UTC(2024, 0, 1) && t < Date.now() + 2 * 86_400_000;
 }

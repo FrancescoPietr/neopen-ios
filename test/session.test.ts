@@ -146,3 +146,27 @@ test("timeout when the pen doesn't answer", async () => {
   await rejectsWith(connect(pen, new PageStore(new MemoryFiles())).start(), "timeout");
   assert.ok(Date.now() - t0 < 15000);
 });
+
+test("store: strokes written with the pen clock reset (battery died) get today's time, the same way every time", async () => {
+  const { PageStore, MemoryFiles } = await import("../src/core/store");
+  const files = new MemoryFiles();
+  const store = new PageStore(files);
+  const key = { section: 3, owner: 27, note: 746, page: 30 };
+  const mk = (t: number) => ({ t, tip: 0, color: 0, pts: [1, 1, 500, 2, 2, 500] });
+  const now = Date.UTC(2026, 10, 20, 8);
+  // two strokes at "year 2000" pen time
+  const a = [mk(946_684_800_000), mk(946_684_805_000)];
+  store.fixClock(a, now);
+  assert.equal(a[1].t, now);
+  assert.equal(a[0].t, now - 5000);
+  // the pen sends them again later (memory kept): same times, no duplicates
+  const b = [mk(946_684_800_000), mk(946_684_805_000)];
+  store.fixClock(b, now + 3_600_000);
+  assert.deepEqual(b.map((s) => s.t), a.map((s) => s.t));
+  // normal strokes are untouched
+  const c = [mk(now)];
+  assert.equal(store.fixClock(c, now), 0);
+  assert.equal(c[0].t, now);
+  assert.equal(store.add(a, key), 2);
+  assert.equal(store.add(b, key), 0);
+});
